@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.25)
 project(lmport LANGUAGES C CXX VERSION 1.1.4)
+if (APPLE)
+    enable_language(OBJC OBJCXX)  # src/mobile/native_ios.mm (iOS phone layer)
+endif ()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
