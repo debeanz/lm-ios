@@ -1,5 +1,6 @@
 #include "recomp/widescreen.h"
 
+#include "mobile/mobile.h"
 #include "port/install.h"
 #include "port/options.h"
 #include "port/settings.h"
@@ -32,15 +33,18 @@ std::atomic<float> sFactor{1.0f};
 std::atomic<float> sFov{1.0f};
 std::atomic<bool> sAnchorHud{false};
 bool sOriginal = false;  // 4:3 mode: Aurora fits the 4:3 frame into the window
+float sContentAspect = 0.0f;  // phone Fit with another fixed aspect (AuroraSetContentAspect)
 bool sPolicySet = false;
 
 float factorFor(float aspect) { return aspect > kBaseAspect ? kBaseAspect / aspect : 1.0f; }
 
 }  // namespace
 
-// --aspect on the command line wins; otherwise the Visuals tab's setting (live).
+// --aspect on the command line wins; otherwise the Visuals tab's setting (live), or on a phone the
+// iPhone tab's Aspect Ratio (src/mobile).
 float configuredAspect() {
     if (port::options().aspectRatio > 0.0f) return port::options().aspectRatio;
+    if (mobile::enabled()) return mobile::targetAspect();
     switch (port::settings().video.aspect) {
     case port::AspectMode::Original4x3: return kBaseAspect;
     case port::AspectMode::Wide16x9: return 16.0f / 9.0f;
@@ -52,12 +56,20 @@ float configuredAspect() {
 }
 
 void applyPolicy(float aspect) {
-    const bool original = aspect > 0.0f && aspect <= kBaseAspect + 1e-3f;
-    if (original != sOriginal || !sPolicySet) {
+    // Phone Screen Scaling (src/mobile): Fit keeps any fixed aspect with bars around it (Aurora 0239),
+    // Stretch fills the panel, also with 4:3.
+    const bool phone = mobile::enabled();
+    const bool phoneFit = phone && aspect > 0.0f && mobile::fitScaling();
+    const bool original = aspect > 0.0f && aspect <= kBaseAspect + 1e-3f && (!phone || phoneFit);
+    const float content = phoneFit && !original ? aspect : 0.0f;
+    if (original != sOriginal || content != sContentAspect || !sPolicySet) {
         sOriginal = original;
+        sContentAspect = content;
         sPolicySet = true;
-        AuroraSetViewportPolicy(sOriginal ? AURORA_VIEWPORT_FIT : AURORA_VIEWPORT_STRETCH);
-        log("[ws] aspect %s", sOriginal ? "4:3 (original)" : aspect > 0.0f ? "fixed" : "auto (window)");
+        AuroraSetContentAspect(content);
+        AuroraSetViewportPolicy(sOriginal || content > 0.0f ? AURORA_VIEWPORT_FIT : AURORA_VIEWPORT_STRETCH);
+        log("[ws] aspect %s%s", sOriginal ? "4:3 (original)" : aspect > 0.0f ? "fixed" : "auto (window)",
+            content > 0.0f ? " (fit, bars around the image)" : "");
     }
 }
 

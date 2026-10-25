@@ -1,5 +1,9 @@
 #include "port/install.h"
 
+#if defined(__APPLE__)
+#include "mobile/native.h"
+#endif
+
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -176,6 +180,16 @@ fs::path sysDir(Kind, bool create) {
     if (create) fs::create_directories(longPath(dir), ec);
     return dir;
 }
+#elif defined(__APPLE__)
+// iOS (docs/IOS.md "Where things are"): settings, saves, logs and disc images in the app's Documents
+// folder, which the Files app shows (On My iPhone > Luigi's Mansion); shader caches in
+// Library/Caches (rebuildable, not backed up). No old folders to migrate.
+fs::path sysDir(Kind kind, bool create) {
+    const fs::path dir = kind == Kind::Cache ? mobile::native::cachesDir() / kFolderName : mobile::native::documentsDir();
+    std::error_code ec;
+    if (create) fs::create_directories(dir, ec);
+    return dir;
+}
 #else
 // XDG base directory: $<var> if set to an absolute path, else $HOME/<fallback>.
 fs::path sysDir(Kind kind, bool create) {
@@ -225,6 +239,8 @@ fs::path computeExeDir() {
     const DWORD n = GetModuleFileNameW(nullptr, buf.data(), DWORD(buf.size()));
     buf.resize(n);
     return fs::path(buf).parent_path();
+#elif defined(__APPLE__)
+    return mobile::native::bundleDir();  // the .app (read-only on iOS: no portable mode there)
 #else
     std::error_code ec;
     const fs::path p = fs::read_symlink("/proc/self/exe", ec);

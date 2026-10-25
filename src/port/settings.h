@@ -352,8 +352,25 @@ struct InterfaceSettings {
     int menuScale = 0;  // percent (75..300, ui::kSteps); 0 = Auto (window height / display scaling)
 };
 
+// iPhone / iPad (src/mobile, docs/IOS.md; F1 > iPhone). The same rows and values as every phone
+// port: render height, image aspect, Fit/Stretch, UI size and the touch controller. Frame rate and
+// Show FPS are video.targetFps / enhancements.showFps.
+struct MobileSettings {
+    int version = 0;            // 0: phone defaults not applied yet on this install (mobile.cpp)
+    int resolution = 0;         // 0 Native, 1 2106x1084, 2 1920x1080, 3 1600x900, 4 1280x720
+    int aspect = 0;             // 0 device, 1 1.943:1, 2 16:9, 3 4:3
+    int scaling = 0;            // 0 Fit (bars around the image), 1 Stretch
+    int uiSize = 1;             // 0 Small, 1 Default, 2 Large
+    bool touchControls = true;  // on-screen GameCube controller (hidden anyway while a controller is connected)
+    int touchOpacity = 65;      // percent, 20..100
+    int touchSize = 100;        // percent, 70..150
+    bool floatingStick = false; // Control Stick: fixed, or appears where the thumb lands
+    bool haptics = true;        // taps on the touch controls and the game's rumble on the phone
+};
+
 struct Settings {
     InterfaceSettings ui;  // (not "interface": a macro in the Windows headers)
+    MobileSettings mobile;
     VideoSettings video;
     RenderingSettings rendering;
     GhostLightSettings ghostLights;

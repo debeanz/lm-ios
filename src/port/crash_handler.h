@@ -4,6 +4,10 @@
 namespace port {
 // Installs abort/terminate/SEH handlers that print a symbolized stack trace to stderr.
 void installCrashHandler();
+// Called first on every crash path, before anything is printed (async-signal-safe code only).
+// iOS: stderr normally runs through the session log's timestamping pipe; the hook points it
+// straight at the log file so the crash report is on disk before the process dies (src/mobile).
+void setCrashOutputHook(void (*hook)());
 // Logs "[hang] ..." with the current phase (setPhase) when the main thread has not called
 // heartbeat() for 15 s (then every 30 s). Linux: every thread's stack once per run at the first
 // report (issue #11). LM_HANG_DUMP=<seconds>: also every thread's stack (three samples a second

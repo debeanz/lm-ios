@@ -10,6 +10,9 @@
 #include <SDL3/SDL_messagebox.h>
 #include <SDL3/SDL_video.h>
 
+#include "mobile/mobile.h"
+#include "mobile/native.h"
+#include "mobile/session_log.h"
 #include "port/crash_handler.h"
 #include "port/dol.h"
 #include "port/install.h"
@@ -184,6 +187,10 @@ void hangDetail(char* out, size_t size, bool stallBegins) {
 
 int main(int argc, char* argv[]) {
     using namespace recomp;
+    // iPhone / iPad: every line printed from here on goes into a timestamped session log in the app's
+    // Documents/Logs folder (Files app), saved as it is written; crash reports land there too.
+    mobile::sessionlog::start(mobile::native::documentsDir() / "Logs");
+    if (mobile::sessionlog::active()) port::setCrashOutputHook(&mobile::sessionlog::crashMode);
     // Windows: no console window for players; output to a terminal, a redirect or last_run.log.
     port::recovery::setupConsole(argc, argv);
     port::installCrashHandler();
@@ -211,6 +218,7 @@ int main(int argc, char* argv[]) {
     config.appName = "Luigi's Mansion Recompiled";
     config.logCallback = &logCallback;
     port::loadSettings();
+    mobile::beforeAurora();  // phone: first-start defaults (saved), VSync/fullscreen always on
     // Start-up recovery (docs/SETUP.md "When the game does not start"): after a start that failed,
     // offers to reset the settings, rebuild the game data or put the saves aside.
 #ifdef LM_STATIC_MODULE
@@ -312,7 +320,9 @@ int main(int argc, char* argv[]) {
     // lmrecomp (developer build): the game was recompiled at build time and linked in.
     setGameModule(&kGameModule);
     const char* wantId = kGameModule.gameId;
-    const std::string disc = findDisc(wantId);
+    std::string disc = findDisc(wantId);
+    // iOS: the disc image lives in the app's Documents folder; the first start asks for it.
+    if (disc.empty() && mobile::enabled()) disc = mobile::chooseDisc(wantId);
     {
         auto& inst = port::install();
         inst.staticBuild = true;
@@ -340,6 +350,12 @@ int main(int argc, char* argv[]) {
     port::setPhase("loading the game");
     if (disc.empty() || !aurora_dvd_open(disc.c_str())) {
         std::fprintf(stderr, "Could not open a Luigi's Mansion disc image. Pass --disc <path to .iso/.rvz>.\n");
+        if (mobile::native::isIOS())
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Luigi's Mansion",
+                                     "The disc image could not be opened. Copy it again with the Files app (On My iPhone > "
+                                     "Luigi's Mansion) and restart the app. Details are in the Logs folder there.",
+                                     nullptr);
+        mobile::sessionlog::flush();
         aurora_shutdown();
         return 1;
     }
@@ -356,6 +372,7 @@ int main(int argc, char* argv[]) {
     const u8* dol = DVDGetDOLLocation(&dolSize);
 
     menu::init();
+    mobile::init();  // touch controller, phone display model, session log header
     g_mem = static_cast<u8*>(std::calloc(1, kHostMemSize));
     loadDol(dol);
     if (port::install().running == port::GameVersion::PAL) {
@@ -425,7 +442,8 @@ int main(int argc, char* argv[]) {
         if (quitAfter > 0 && std::chrono::duration<double>(std::chrono::steady_clock::now() - runStart).count() > quitAfter)
             break;
         for (const AuroraEvent* ev = aurora_update(); ev && ev->type != AURORA_NONE; ++ev) {
-            if (ev->type == AURORA_SDL_EVENT) menu::handleEvent(ev->sdl);
+            // Touches on the on-screen controller (and app lifecycle on a phone) first.
+            if (ev->type == AURORA_SDL_EVENT && !mobile::handleEvent(ev->sdl)) menu::handleEvent(ev->sdl);
             if (ev->type == AURORA_EXIT) exiting = true;
             else if (ev->type == AURORA_PAUSED) {
                 paused = true;
@@ -487,6 +505,7 @@ int main(int argc, char* argv[]) {
             lastPresented = SteadyClock::now();
             presentStallReported = false;
             menu::draw();  // applies settings changes (they may change what is being compiled)
+            mobile::draw();
             precache::drawHold();
             precache::frame();
             aurora_end_frame();
@@ -513,6 +532,7 @@ int main(int argc, char* argv[]) {
         interp::hostMark(2);
         port::setPhase("game loop: F1 menu / overlays");
         menu::draw();
+        mobile::draw();  // on-screen controller (over the menu's windows), phone [perf] lines
         precache::frame();
         port::setPhase("game loop: present hold");
         pacing::beforeEnd();
@@ -528,6 +548,7 @@ int main(int argc, char* argv[]) {
 
     port::setPhase("shutdown (releasing graphics objects, writing caches)");
     menu::shutdown();
+    mobile::sessionlog::flush();
     vi::stopTimer();
     frame::stop();
     audio::outShutdown();

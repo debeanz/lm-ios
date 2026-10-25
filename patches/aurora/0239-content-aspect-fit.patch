@@ -1,0 +1,83 @@
+diff --git a/include/dolphin/gx/GXAurora.h b/include/dolphin/gx/GXAurora.h
+index 8ec5b00..0b4bbc7 100644
+--- a/include/dolphin/gx/GXAurora.h
++++ b/include/dolphin/gx/GXAurora.h
+@@ -268,6 +268,12 @@ typedef enum _AuroraViewportPolicy {
+  */
+ void AuroraSetViewportPolicy(AuroraViewportPolicy policy);
+ 
++/**
++ * Aspect ratio (width / height) that AURORA_VIEWPORT_FIT keeps instead of the logical frame buffer's
++ * (e.g. 16:9 letterboxed on a wider phone panel). 0 = the logical frame buffer's aspect (default).
++ */
++void AuroraSetContentAspect(float aspect);
++
+ /**
+  * Retrieves the current content framebuffer size.
+  */
+diff --git a/lib/dolphin/gx/GXAurora.cpp b/lib/dolphin/gx/GXAurora.cpp
+index d4a8960..44afcf9 100644
+--- a/lib/dolphin/gx/GXAurora.cpp
++++ b/lib/dolphin/gx/GXAurora.cpp
+@@ -41,6 +41,8 @@ void AuroraSetViewportPolicy(AuroraViewportPolicy policy) {
+   aurora::gx::set_viewport_policy(policy);
+ }
+ 
++void AuroraSetContentAspect(float aspect) { aurora::window::set_content_aspect(aspect); }
++
+ void AuroraGetRenderSize(u32* width, u32* height) {
+   const auto windowSize = aurora::window::get_window_size();
+   if (width != nullptr) {
+diff --git a/lib/window.cpp b/lib/window.cpp
+index cf84de3..64b9280 100644
+--- a/lib/window.cpp
++++ b/lib/window.cpp
+@@ -47,6 +47,7 @@ SDL_Window* g_window;
+ SDL_Renderer* g_renderer;
+ float g_frameBufferScale = 0.f;
+ bool g_frameBufferAspectFit = false;
++float g_contentAspect = 0.f; // > 0: aspect fit keeps this width/height instead of the logical frame buffer's
+ AuroraWindowSize g_windowSize;
+ std::vector<AuroraEvent> g_events;
+ std::deque<std::string> g_eventStrings;
+@@ -490,8 +491,9 @@ AuroraWindowSize get_window_size() {
+   if (g_frameBufferAspectFit) {
+     const auto [baseW, baseH] = vi::configured_fb_size();
+     if (baseW > 0 && baseH > 0) {
+-      const auto [fitW, fitH] =
+-          fit_frame_buffer_to_aspect(fb_w, fb_h, static_cast<float>(baseW) / static_cast<float>(baseH));
++      const float aspect =
++          g_contentAspect > 0.f ? g_contentAspect : static_cast<float>(baseW) / static_cast<float>(baseH);
++      const auto [fitW, fitH] = fit_frame_buffer_to_aspect(fb_w, fb_h, aspect);
+       fb_w = fitW;
+       fb_h = fitH;
+     }
+@@ -612,6 +614,17 @@ void set_frame_buffer_aspect_fit(bool fit) {
+   request_frame_buffer_resize();
+ }
+ 
++void set_content_aspect(float aspect) {
++  if (g_contentAspect == aspect) {
++    return;
++  }
++
++  g_contentAspect = aspect;
++  if (g_frameBufferAspectFit) {
++    request_frame_buffer_resize();
++  }
++}
++
+ void set_background_input(bool value) { SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, value ? "1" : "0"); }
+ 
+ } // namespace aurora::window
+diff --git a/lib/window.hpp b/lib/window.hpp
+index 51257ea..c125bcf 100644
+--- a/lib/window.hpp
++++ b/lib/window.hpp
+@@ -50,5 +50,6 @@ void center_window();
+ void request_frame_buffer_resize();
+ void set_frame_buffer_scale(float scale);
+ void set_frame_buffer_aspect_fit(bool fit);
++void set_content_aspect(float aspect);
+ void set_background_input(bool value);
+ }; // namespace aurora::window

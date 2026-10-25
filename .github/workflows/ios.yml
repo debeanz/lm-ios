@@ -1,0 +1,143 @@
+# iPhone / iPad build (docs/IOS.md): an unsigned IPA of Luigi's Mansion Recompiled, with the game
+# recompiled from YOUR main.dol.
+#
+# Two repositories:
+#  - this one (may be public: GitHub-hosted Mac minutes are free there) holds only source code and
+#    runs this workflow;
+#  - a PRIVATE data repository (repository variable GAME_DATA_REPO, e.g. you/lm-ios-data) holds your
+#    main.dol (release "game-data", uploaded by tools/ios/publish-dol.ps1) and receives the finished
+#    IPA and the full build log (release "ios-<run number>"). It never runs Actions.
+# Secret GAME_DATA_TOKEN: a fine-grained token with Contents read/write on the data repository only.
+#
+# Nothing derived from the game goes into this repository: no artifacts, no releases, and the
+# public log shows no generated code (compiler messages from it are counted, not printed).
+name: iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      dol_version:
+        description: "Release of main.dol: GLME01 (USA) or GLMP01 (Europe)"
+        default: GLME01
+        type: choice
+        options: [GLME01, GLMP01]
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    timeout-minutes: 150
+    env:
+      DATA_REPO: ${{ vars.GAME_DATA_REPO }}
+      GH_TOKEN: ${{ secrets.GAME_DATA_TOKEN }}
+      TAG: ios-${{ github.run_number }}
+    steps:
+      - name: Check the data repository
+        run: |
+          if [ -z "$DATA_REPO" ] || [ -z "$GH_TOKEN" ]; then
+            echo "::error::Set the repository variable GAME_DATA_REPO and the secret GAME_DATA_TOKEN (docs/IOS.md)."
+            exit 1
+          fi
+          vis=$(gh repo view "$DATA_REPO" --json visibility -q .visibility)
+          echo "data repository visibility: $vis"
+          if [ "$vis" != "PRIVATE" ]; then
+            echo "::error::The data repository must be private: it holds your main.dol and the IPA."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Get main.dol (private data repository)
+        run: |
+          mkdir -p "$RUNNER_TEMP/gamedata"
+          gh release download game-data --repo "$DATA_REPO" -p main.dol -D "$RUNNER_TEMP/gamedata" --clobber
+          echo "main.dol: $(stat -f %z "$RUNNER_TEMP/gamedata/main.dol") bytes, SHA-1 $(shasum -a 1 "$RUNNER_TEMP/gamedata/main.dol" | cut -d' ' -f1)"
+
+      - name: Tools (Xcode, Ninja, Rust for nod)
+        run: |
+          xcodebuild -version
+          brew list ninja >/dev/null 2>&1 || brew install ninja
+          rustup target add aarch64-apple-ios
+          cmake --version | head -1
+          ninja --version
+
+      - name: Cache third-party builds (Dawn, SDL3, nod)
+        uses: actions/cache@v4
+        with:
+          # Third-party code only; the generated game code (recomp_gen) is never cached.
+          path: |
+            build/ios/_deps
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ios-deps-${{ hashFiles('.gitmodules', 'extern/aurora/cmake/AuroraDependencyVersions.cmake', 'patches/aurora/*.patch') }}
+          restore-keys: ios-deps-
+
+      - name: Host recompiler
+        run: |
+          cmake -S tools/recomp/host -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/host
+
+      - name: Configure (iOS arm64)
+        run: |
+          cmake -S . -B build/ios -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLM_DOL="$RUNNER_TEMP/gamedata/main.dol" \
+            -DLM_DOL_VERSION=${{ inputs.dol_version }} \
+            -DLM_HOST_RECOMPILE="$PWD/build/host/lmrecompile" \
+            -DAURORA_SDL3_PROVIDER=vendor \
+            -DAURORA_NOD_PROVIDER=vendor \
+            -DRust_CARGO_TARGET=aarch64-apple-ios \
+            -DAURORA_ENABLE_EXAMPLES=OFF
+
+      - name: Build
+        id: build
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          log="$RUNNER_TEMP/out/build-${{ github.run_number }}.log"
+          set +e
+          cmake --build build/ios --target LuigisMansioniOS -- -k 0 > "$log" 2>&1
+          status=$?
+          set -e
+          # Public log: errors and warnings from the port's own code and third-party code; messages
+          # about the generated game code (recomp_gen) are only counted (the full log goes to the
+          # private data repository).
+          gen=$(grep -c "recomp_gen/" "$log" || true)
+          echo "build exit status $status; $gen log lines mention generated game code (see the private build log)"
+          grep -E "(error|warning):|FAILED:|Error [0-9]+" "$log" | grep -v "recomp_gen/" | head -300 || true
+          tail -5 "$log" | grep -v "recomp_gen/" || true
+          exit $status
+
+      - name: Package the IPA
+        run: |
+          app=$(find build/ios -maxdepth 2 -name "LuigisMansion.app" -type d | head -1)
+          test -n "$app" || { echo "::error::LuigisMansion.app not found"; exit 1; }
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" -c "Print :CFBundleShortVersionString" "$app/Info.plist"
+          file "$app/LuigisMansion"
+          du -sh "$app"
+          cd "$RUNNER_TEMP"
+          rm -rf Payload && mkdir Payload
+          cp -R "$GITHUB_WORKSPACE/$app" Payload/
+          zip -qry "out/LuigisMansion-${{ inputs.dol_version }}-${{ github.run_number }}.ipa" Payload
+          cp "$GITHUB_WORKSPACE/packaging/ios/LuigisMansion.entitlements" out/
+          ls -lh out
+
+      - name: Deliver to the private data repository
+        if: always() && steps.build.conclusion != 'skipped'
+        run: |
+          cd "$RUNNER_TEMP/out" 2>/dev/null || exit 0
+          ok="${{ job.status }}"
+          title="iOS build ${{ github.run_number }} (${{ inputs.dol_version }})"
+          [ "$ok" = "success" ] || title="$title - FAILED (build log only)"
+          gh release create "$TAG" --repo "$DATA_REPO" --title "$title" \
+            --notes "From ${GITHUB_REPOSITORY}@${GITHUB_SHA::7}, run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}. Install with SideStore, AltStore, Sideloadly or LiveContainer (docs/IOS.md)." \
+            ./*
+          echo "Delivered to the private repository: release $TAG"

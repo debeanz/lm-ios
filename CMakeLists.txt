@@ -85,11 +85,13 @@ endforeach ()
 # each unit is made to compile against Aurora (see docs/ROADMAP.md, Phase 1).
 file(GLOB PORT_SOURCES CONFIGURE_DEPENDS src/port/*.cpp src/port/os/*.cpp src/helpers/*.cpp)
 file(GLOB_RECURSE GAME_SOURCES CONFIGURE_DEPENDS src/game/*.cpp)
+if (NOT IOS)  # old hand-port prototype (reference only); desktop builds only
 add_executable(lmport ${PORT_SOURCES} ${GAME_SOURCES})
 target_include_directories(lmport PRIVATE src)
 target_link_libraries(lmport PRIVATE aurora::main ${GAME_LIBS} ${JSYSTEM_LIBRARIES})
 if (WIN32)
     target_link_libraries(lmport PRIVATE dbghelp winhttp bcrypt)
+endif ()
 endif ()
 
 if (WIN32)
@@ -121,6 +123,13 @@ file(GLOB RECOMP_RUNTIME_SOURCES CONFIGURE_DEPENDS src/recomp/*.cpp)
 list(REMOVE_ITEM RECOMP_RUNTIME_SOURCES ${CMAKE_SOURCE_DIR}/src/recomp/module_rt.cpp)
 list(APPEND RECOMP_RUNTIME_SOURCES src/port/crash_handler.cpp src/port/options.cpp src/port/dol.cpp
     src/port/settings.cpp src/port/install.cpp src/port/update.cpp src/port/recovery.cpp)
+# Phone layer (src/mobile, docs/IOS.md): always on in the iOS app, LM_MOBILE=1 on a PC for testing.
+file(GLOB MOBILE_SOURCES CONFIGURE_DEPENDS src/mobile/*.cpp src/mobile/*.h)
+if (APPLE)
+    list(APPEND MOBILE_SOURCES src/mobile/native_ios.mm)
+    set_source_files_properties(src/mobile/native_ios.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+endif ()
+list(APPEND RECOMP_RUNTIME_SOURCES ${MOBILE_SOURCES})
 # The program's version (F1 > Game, the updater's comparison with the latest GitHub release, the
 # game module's cache key; docs/SETUP.md "Updates"). Only this file sees it, so a version bump
 # rebuilds one file.
@@ -135,7 +144,12 @@ function(lm_runtime_target tgt)
     # Shipped shader/pipeline precache list (tools/pipelines/sweep.py; docs/RENDERING.md).
     add_custom_command(TARGET ${tgt} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/data/pipelines.bin $<TARGET_FILE_DIR:${tgt}>)
-    if (WIN32)
+    if (IOS)
+        # Phone layer (src/mobile/native_ios.mm): haptics, Files picker, memory/thermal readings.
+        target_link_libraries(${tgt} PRIVATE "-framework UIKit" "-framework Foundation" "-framework Metal"
+            "-framework QuartzCore" "-framework CoreHaptics" "-framework UniformTypeIdentifiers"
+            "-framework GameController")
+    elseif (WIN32)
         target_link_libraries(${tgt} PRIVATE dbghelp winhttp bcrypt)  # winhttp/bcrypt: updater
         # longPathAware (docs/SETUP.md "Long paths"): merged into the default manifest by the linker step.
         target_sources(${tgt} PRIVATE ${CMAKE_SOURCE_DIR}/packaging/windows/longpath.manifest)
@@ -161,7 +175,9 @@ endfunction()
 
 # LuigisMansionRecomp: what end users run. It contains the runtime, the recompiler and
 # the setup UI; the game itself is a module DLL that setup compiles from the user's disc
-# with the bundled clang + lld (docs/SETUP.md).
+# with the bundled clang + lld (docs/SETUP.md). Not on iOS, which cannot compile or load code
+# at run time: the iOS app links the game recompiled at build time (LuigisMansioniOS below).
+if (NOT IOS)
 file(GLOB SETUP_SOURCES CONFIGURE_DEPENDS src/setup/*.cpp src/setup/*.h)
 add_executable(LuigisMansionRecomp ${RECOMP_RUNTIME_SOURCES} ${SETUP_SOURCES})
 lm_runtime_target(LuigisMansionRecomp)
@@ -252,6 +268,8 @@ else ()
     install(FILES packaging/linux/README.txt DESTINATION .)
 endif ()
 
+endif ()  # NOT IOS
+
 # lmrecomp: developer build with the game recompiled at build time and linked in
 # statically (debuggable, no setup). LM_DOL is the user's own main.dol; LM_DOL_VERSION
 # selects the symbol map (GLME01, or GLMP01 for the European release).
@@ -282,18 +300,40 @@ if (EXISTS ${LM_DOL})
         endif ()
         list(APPEND _recomp_files ${LM_RECOMP_DIR}/funcs_${_i}.cpp)
     endforeach ()
+    # A cross build (iOS) runs a recompiler built for the build machine (tools/recomp/host).
+    set(LM_HOST_RECOMPILE "" CACHE FILEPATH "Host-built lmrecompile for cross builds (tools/recomp/host)")
+    if (CMAKE_CROSSCOMPILING)
+        if (NOT EXISTS "${LM_HOST_RECOMPILE}")
+            message(FATAL_ERROR "Cross build: set LM_HOST_RECOMPILE to a host build of lmrecompile (tools/recomp/host, docs/IOS.md)")
+        endif ()
+        set(_recompile_cmd ${LM_HOST_RECOMPILE})
+        set(_recompile_dep ${LM_HOST_RECOMPILE})
+    else ()
+        set(_recompile_cmd lmrecompile)
+        set(_recompile_dep lmrecompile)
+    endif ()
     add_custom_command(
         OUTPUT ${_recomp_files} ${LM_RECOMP_DIR}/funcs.h ${LM_RECOMP_DIR}/summary.txt
-        COMMAND lmrecompile --dol ${LM_DOL} --version ${LM_DOL_VERSION} ${_recomp_cfg}
+        COMMAND ${_recompile_cmd} --dol ${LM_DOL} --version ${LM_DOL_VERSION} ${_recomp_cfg}
             --hooks ${CMAKE_SOURCE_DIR}/tools/recomp/hooks.txt --out ${LM_RECOMP_DIR}
-        DEPENDS lmrecompile ${LM_DOL} ${_recomp_deps} ${CMAKE_SOURCE_DIR}/tools/recomp/hooks.txt
+        DEPENDS ${_recompile_dep} ${LM_DOL} ${_recomp_deps} ${CMAKE_SOURCE_DIR}/tools/recomp/hooks.txt
         COMMENT "Recompiling ${LM_DOL}"
         VERBATIM)
 
-    add_executable(lmrecomp ${RECOMP_RUNTIME_SOURCES} ${_recomp_files})
-    lm_runtime_target(lmrecomp)
-    target_include_directories(lmrecomp PRIVATE ${LM_RECOMP_DIR})
-    target_compile_definitions(lmrecomp PRIVATE LM_STATIC_MODULE=1)
+    if (IOS)
+        # The iPhone / iPad app (docs/IOS.md): the game recompiled at build time and linked in, the
+        # phone layer (src/mobile), the disc image imported at the first start.
+        set(_static_target LuigisMansioniOS)
+        add_executable(${_static_target} MACOSX_BUNDLE ${RECOMP_RUNTIME_SOURCES} ${_recomp_files})
+        include(packaging/ios/ios_bundle.cmake)
+        lm_ios_bundle(${_static_target})
+    else ()
+        set(_static_target lmrecomp)
+        add_executable(${_static_target} ${RECOMP_RUNTIME_SOURCES} ${_recomp_files})
+    endif ()
+    lm_runtime_target(${_static_target})
+    target_include_directories(${_static_target} PRIVATE ${LM_RECOMP_DIR})
+    target_compile_definitions(${_static_target} PRIVATE LM_STATIC_MODULE=1)
     # Generated code: one huge function per guest function, lots of gotos.
     if (CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
         set_source_files_properties(${_recomp_files} PROPERTIES COMPILE_OPTIONS "/clang:-Wno-unused-label;/clang:-Wno-unused-variable")

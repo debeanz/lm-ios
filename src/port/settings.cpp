@@ -73,6 +73,16 @@ std::vector<Field> fields() {
     auto& u = sSettings.unused2;
     return {
         num("interface", "menu_scale", sSettings.ui.menuScale),
+        num("mobile", "version", sSettings.mobile.version),
+        num("mobile", "resolution", sSettings.mobile.resolution),
+        num("mobile", "aspect", sSettings.mobile.aspect),
+        num("mobile", "scaling", sSettings.mobile.scaling),
+        num("mobile", "ui_size", sSettings.mobile.uiSize),
+        flag("mobile", "touch_controls", sSettings.mobile.touchControls),
+        num("mobile", "touch_opacity", sSettings.mobile.touchOpacity),
+        num("mobile", "touch_size", sSettings.mobile.touchSize),
+        flag("mobile", "floating_stick", sSettings.mobile.floatingStick),
+        flag("mobile", "haptics", sSettings.mobile.haptics),
         num("video", "target_fps", v.targetFps),
         flag("video", "unlimited_fps", v.unlimitedFps),
         flag("video", "match_display_refresh", v.matchDisplay),
@@ -317,6 +327,13 @@ void sanitize() {
     auto& v = sSettings.video;
     // Menu size: 0 (Auto) or a percentage (the UI snaps it to its nearest step).
     if (sSettings.ui.menuScale != 0) clampTo(sSettings.ui.menuScale, 75, 300);
+    auto& m = sSettings.mobile;
+    clampTo(m.resolution, 0, 4);
+    clampTo(m.aspect, 0, 3);
+    clampTo(m.scaling, 0, 1);
+    clampTo(m.uiSize, 0, 2);
+    clampTo(m.touchOpacity, 20, 100);
+    clampTo(m.touchSize, 70, 150);
     clampTo(v.targetFps, kMinFps, kMaxFps);
     clampEnum(v.aspect, AspectMode::Ultra32x9, AspectMode::Auto);
     clampTo(v.resolutionScale, 0, 8);

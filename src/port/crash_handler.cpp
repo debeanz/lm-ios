@@ -22,6 +22,13 @@
 #include <windows.h>
 #include <dbghelp.h>
 #include <tlhelp32.h>
+#elif defined(__APPLE__)
+#include <dlfcn.h>
+#include <execinfo.h>
+#include <mach/mach.h>
+#include <pthread.h>
+#include <sys/ucontext.h>
+#include <unistd.h>
 #else
 #include <dirent.h>
 #include <dlfcn.h>
@@ -33,6 +40,11 @@
 
 namespace port {
 namespace {
+
+void (*sCrashOutputHook)() = nullptr;
+void crashOutput() {
+    if (sCrashOutputHook) sCrashOutputHook();
+}
 
 void printStackTo(std::FILE* out, const char* reason) {
     std::fprintf(out, "\n=== crash: %s ===\n", reason);
@@ -95,6 +107,7 @@ void printStack(const char* reason) {
 }
 
 void onAbort(int) {
+    crashOutput();
     aurora_pipeline_cache_note_crash();  // a real crash for the pipeline crash journal (Aurora 0231)
     recovery::onCrash("abort()");
     printStack("abort()");
@@ -148,15 +161,22 @@ void onSignal(int sig, siginfo_t* info, void* uctx) {
         return;
     }
     sInSignal = 1;
+    crashOutput();
     aurora_pipeline_cache_note_crash();
     recovery::onCrash(strsignal(sig));
     const void* pc = nullptr;
     const void* sp = nullptr;
-#if defined(__x86_64__)
+#if defined(__linux__) && defined(__x86_64__)
     if (uctx) {
         const auto* uc = static_cast<const ucontext_t*>(uctx);
         pc = reinterpret_cast<const void*>(uc->uc_mcontext.gregs[REG_RIP]);
         sp = reinterpret_cast<const void*>(uc->uc_mcontext.gregs[REG_RSP]);
+    }
+#elif defined(__APPLE__) && defined(__arm64__)
+    if (uctx) {
+        const auto* uc = static_cast<const ucontext_t*>(uctx);
+        pc = reinterpret_cast<const void*>(arm_thread_state64_get_pc(uc->uc_mcontext->__ss));
+        sp = reinterpret_cast<const void*>(arm_thread_state64_get_sp(uc->uc_mcontext->__ss));
     }
 #endif
     Dl_info dl{};
@@ -253,6 +273,69 @@ void dumpAllThreads(const char* reason) {
     for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te))
         if (te.th32OwnerProcessID == pid && te.th32ThreadID != self) printThreadStack(process, te.th32ThreadID);
     CloseHandle(snap);
+    std::fprintf(stderr, "=== end of thread stacks ===\n");
+    std::fflush(stderr);
+}
+#elif defined(__APPLE__)
+// iOS / macOS (no /proc, no real-time signals): every other thread is suspended just long enough to
+// copy its pc, lr and frame-pointer chain (arm64 Apple code always keeps frame pointers), then
+// resumed; printing and symbol lookup happen afterwards, so a suspended thread holding the stdio or
+// dyld lock cannot deadlock the dump.
+void dumpAllThreads(const char* reason) {
+    thread_act_array_t threads = nullptr;
+    mach_msg_type_number_t count = 0;
+    if (task_threads(mach_task_self(), &threads, &count) != KERN_SUCCESS) return;
+    const thread_t self = mach_thread_self();
+    std::fprintf(stderr, "\n=== %s: all thread stacks (%u threads) ===\n", reason, unsigned(count));
+    for (mach_msg_type_number_t i = 0; i < count; i++) {
+        const thread_t t = threads[i];
+        char name[64] = "";
+        if (pthread_t pt = pthread_from_mach_thread_np(t)) pthread_getname_np(pt, name, sizeof(name));
+        uintptr_t frames[48];
+        int n = 0;
+        if (t == self) {
+            void* own[48];
+            n = backtrace(own, 48);
+            for (int k = 0; k < n; k++) frames[k] = reinterpret_cast<uintptr_t>(own[k]);
+        } else if (thread_suspend(t) == KERN_SUCCESS) {
+#if defined(__arm64__)
+            arm_thread_state64_t st{};
+            mach_msg_type_number_t sc = ARM_THREAD_STATE64_COUNT;
+            if (thread_get_state(t, ARM_THREAD_STATE64, reinterpret_cast<thread_state_t>(&st), &sc) == KERN_SUCCESS) {
+                frames[n++] = uintptr_t(arm_thread_state64_get_pc(st));
+                frames[n++] = uintptr_t(arm_thread_state64_get_lr(st));
+                uintptr_t fp = uintptr_t(arm_thread_state64_get_fp(st));
+                // Frame records are {previous fp, return address}; stop at anything implausible.
+                while (n < 48 && fp && (fp & 7) == 0) {
+                    const uintptr_t* rec = reinterpret_cast<const uintptr_t*>(fp);
+                    const uintptr_t next = rec[0], ret = rec[1] & 0x0000000FFFFFFFFFull;  // strip pointer auth bits
+                    if (!ret) break;
+                    frames[n++] = ret;
+                    if (next <= fp) break;
+                    fp = next;
+                }
+            }
+#endif
+            thread_resume(t);
+        }
+        std::fprintf(stderr, "--- thread %u%s%s%s ---\n", unsigned(i), name[0] ? " (" : "", name, name[0] ? ")" : "");
+        for (int k = 0; k < n; k++) {
+            Dl_info dl{};
+            const void* a = reinterpret_cast<const void*>(frames[k]);
+            if (dladdr(a, &dl) && dl.dli_fname) {
+                const char* base = std::strrchr(dl.dli_fname, '/');
+                std::fprintf(stderr, "  #%02d %s+0x%lx %s+0x%lx\n", k, base ? base + 1 : dl.dli_fname,
+                             static_cast<unsigned long>(frames[k] - reinterpret_cast<uintptr_t>(dl.dli_fbase)),
+                             dl.dli_sname ? dl.dli_sname : "?",
+                             dl.dli_saddr ? static_cast<unsigned long>(frames[k] - reinterpret_cast<uintptr_t>(dl.dli_saddr)) : 0ul);
+            } else {
+                std::fprintf(stderr, "  #%02d 0x%lx\n", k, static_cast<unsigned long>(frames[k]));
+            }
+        }
+        mach_port_deallocate(mach_task_self(), t);
+    }
+    mach_port_deallocate(mach_task_self(), self);
+    vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(threads), count * sizeof(thread_t));
     std::fprintf(stderr, "=== end of thread stacks ===\n");
     std::fflush(stderr);
 }
@@ -414,9 +497,12 @@ void startHangWatchdog() {
     }).detach();
 }
 
+void setCrashOutputHook(void (*hook)()) { sCrashOutputHook = hook; }
+
 void installCrashHandler() {
     std::signal(SIGABRT, onAbort);
     std::set_terminate([] {
+        crashOutput();
         aurora_pipeline_cache_note_crash();
         recovery::onCrash("std::terminate");
         printStack("std::terminate");

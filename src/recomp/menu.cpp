@@ -4,6 +4,7 @@
 #include "recomp/menu.h"
 #include "recomp/gx_bridge.h"
 
+#include "mobile/mobile.h"
 #include "port/install.h"
 #include "port/options.h"
 #include "port/settings.h"
@@ -1451,14 +1452,21 @@ void menuSizeControl() {
 
 void visualsTab() {
     auto& v = port::settings().video;
-    ImGui::SeparatorText("Menu");
-    menuSizeControl();
-    ImGui::SeparatorText("Frame rate and view");
-    frameRateControls(v);
-    static const char* kAspects[] = {"Original 4:3", "Match window", "16:9", "16:10", "21:9", "32:9"};
-    sDirty |= combo("Aspect ratio", v.aspect, kAspects, 6);
-    ImGui::SetItemTooltip("Shape of the 3D view. Original 4:3: as on the console, with black bars in a wider\n"
-                          "window. Match window: fills the window. The fixed ratios add black bars as needed.");
+    // On a phone the menu size, frame rate, aspect, resolution and window rows are the iPhone tab's
+    // (src/mobile); fullscreen and VSync do not apply there.
+    const bool phone = mobile::enabled();
+    if (!phone) {
+        ImGui::SeparatorText("Menu");
+        menuSizeControl();
+    }
+    ImGui::SeparatorText(phone ? "View" : "Frame rate and view");
+    if (!phone) {
+        frameRateControls(v);
+        static const char* kAspects[] = {"Original 4:3", "Match window", "16:9", "16:10", "21:9", "32:9"};
+        sDirty |= combo("Aspect ratio", v.aspect, kAspects, 6);
+        ImGui::SetItemTooltip("Shape of the 3D view. Original 4:3: as on the console, with black bars in a wider\n"
+                              "window. Match window: fills the window. The fixed ratios add black bars as needed.");
+    }
     sDirty |= recomp::menu::Checkbox("Keep HUD at 4:3", &v.hudKeep4x3);
     ImGui::SetItemTooltip("On: the HUD stays where it is on a 4:3 screen, centred. Off: in widescreen the health\n"
                           "counter moves to the left edge and the Game Boy Horror to the right edge.");
@@ -1466,8 +1474,8 @@ void visualsTab() {
     sDirty |= recomp::menu::SliderFloat("Field of view", &v.fovScale, 0.75f, 1.5f, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
     ImGui::SetItemTooltip("Scales the camera's field of view (1 = original). Higher shows more of the room.");
 
-    ImGui::SeparatorText("Resolution and display");
-    {
+    ImGui::SeparatorText(phone ? "Display" : "Resolution and display");
+    if (!phone) {
         int& rs = v.resolutionScale;
         char label[64];
         if (rs <= 0) {
@@ -1486,19 +1494,21 @@ void visualsTab() {
         ImGui::SetItemTooltip("Internal resolution as a multiple of the console's 480 lines (1x = 640x480).\n"
                               "Match window: the window's own resolution. Higher is sharper and costs GPU time.");
     }
-    if (recomp::menu::Checkbox("Fullscreen", &v.fullscreen)) {
-        sDirty = true;
-        applyWindowSettings();
+    if (!phone) {
+        if (recomp::menu::Checkbox("Fullscreen", &v.fullscreen)) {
+            sDirty = true;
+            applyWindowSettings();
+        }
+        ImGui::SetItemTooltip("The game window fills the whole screen.");
+        sDirty |= recomp::menu::Checkbox("VSync", &v.vsync);
+        ImGui::SetItemTooltip("Frames wait for the display's refresh: no tearing, but the frame rate is limited to\n"
+                              "the refresh rate. Applies on the next launch.%s",
+                              recomp::pacing::gamescope()
+                                  ? "\n\nUnder Gamescope (Steam Deck game mode) VSync is always on: Gamescope composites\n"
+                                    "every frame, so there is no tearing to avoid."
+                                  : "");
+        pending("next launch");
     }
-    ImGui::SetItemTooltip("The game window fills the whole screen.");
-    sDirty |= recomp::menu::Checkbox("VSync", &v.vsync);
-    ImGui::SetItemTooltip("Frames wait for the display's refresh: no tearing, but the frame rate is limited to\n"
-                          "the refresh rate. Applies on the next launch.%s",
-                          recomp::pacing::gamescope()
-                              ? "\n\nUnder Gamescope (Steam Deck game mode) VSync is always on: Gamescope composites\n"
-                                "every frame, so there is no tearing to avoid."
-                              : "");
-    pending("next launch");
     {
         // Only the sample counts the graphics device supports (Aurora 0233: Vulkan/Metal 1 and 4,
         // D3D12 also 2 and 8, compatibility-mode devices none; issue #14). A saved count the device
@@ -1881,7 +1891,9 @@ void fpsOverlay() {
         frames = 0;
         last = now;
     }
-    ImGui::SetNextWindowPos(ImVec2(8 * recomp::ui::scale(), 8 * recomp::ui::scale()));
+    float insetL = 0, insetT = 0, insetR = 0, insetB = 0;  // phone: clear of the camera housing
+    if (mobile::enabled()) mobile::safeAreaInsets(insetL, insetT, insetR, insetB);
+    ImGui::SetNextWindowPos(ImVec2(insetL + 8 * recomp::ui::scale(), insetT + 8 * recomp::ui::scale()));
     ImGui::SetNextWindowBgAlpha(0.4f);
     ImGui::Begin("##fps", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -1912,6 +1924,15 @@ void openTreesForCheck() {
 }
 
 bool isOpen() { return sOpen || recomp::dev::capturesInput(); }
+
+void toggle(const char* tabName) {
+    sOpen = !sOpen;
+    if (sOpen && tabName) sOpenTab = tabName;
+    if (!sOpen && sDirty) {
+        port::saveSettings();
+        sDirty = false;
+    }
+}
 bool quitRequested() { return sQuit; }
 
 void shutdown() {
@@ -2099,16 +2120,33 @@ void draw() {
     updateToast();
     refreshRateToast();
     if (!sOpen) return;
-    // Default 680 x 400 and at least 520 x 300 at 100%, scaled with the menu size and kept on the
-    // screen (ui_scale.cpp; after the first-use position, which would replace the one it sets).
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-    recomp::ui::beforeWindow(kMenuWindow, ImVec2(680, 400), ImVec2(520, 300));
+    const bool phone = mobile::enabled();
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
+    if (phone) {
+        // Phone: the whole safe area (no window juggling with a thumb); scrolls by dragging.
+        float l = 0, t = 0, r = 0, b = 0;
+        mobile::safeAreaInsets(l, t, r, b);
+        const ImVec2 disp = ImGui::GetIO().DisplaySize;
+        const float m = 6.0f * recomp::ui::scale();
+        ImGui::SetNextWindowPos(ImVec2(l + m, t + m), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(disp.x - l - r - 2 * m, disp.y - t - b - 2 * m), ImGuiCond_Always);
+        flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings;
+    } else {
+        // Default 680 x 400 and at least 520 x 300 at 100%, scaled with the menu size and kept on the
+        // screen (ui_scale.cpp; after the first-use position, which would replace the one it sets).
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+        recomp::ui::beforeWindow(kMenuWindow, ImVec2(680, 400), ImVec2(520, 300));
+    }
     idcheck::beforeWindow();
     menuSizeTestMouse();
     bool open = true;
-    if (ImGui::Begin(kMenuWindow, &open, ImGuiWindowFlags_NoCollapse)) {
+    if (ImGui::Begin(kMenuWindow, &open, flags)) {
         ImGui::PushItemWidth(ImGui::GetWindowWidth() * 0.45f);
-        if (ImGui::BeginTabBar("tabs")) {
+        if (ImGui::BeginTabBar("tabs", phone ? ImGuiTabBarFlags_FittingPolicyScroll : 0)) {
+            if (phone && tab("iPhone")) {
+                if (mobile::drawSettingsTab()) sDirty = true;
+                ImGui::EndTabItem();
+            }
             if (tab("Visuals")) {
                 if (ImGui::BeginTabBar("visuals")) {
                     if (ImGui::BeginTabItem("General", nullptr, envTab("General"))) {
@@ -2169,8 +2207,9 @@ void draw() {
             if (recomp::menu::Button("Cancel")) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
-        ImGui::SameLine();
-        if (recomp::menu::Button("Quit game")) ImGui::OpenPopup("Quit?");
+        if (!phone) ImGui::SameLine();
+        // (iOS apps do not quit themselves: the home gesture leaves, the game saves as usual.)
+        if (!phone && recomp::menu::Button("Quit game")) ImGui::OpenPopup("Quit?");
         ImGui::SetItemTooltip("Closes the game (asks first). Settings are saved; unsaved game progress is lost.");
         if (ImGui::BeginPopupModal("Quit?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("Quit Luigi's Mansion? Unsaved progress will be lost.");

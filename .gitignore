@@ -23,3 +23,7 @@ CMakeUserPresets.json
 
 __pycache__/
 *.pyc
+
+# iOS build (docs/IOS.md): your main.dol and downloaded IPAs
+/gamedata/
+*.ipa

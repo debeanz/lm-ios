@@ -19,6 +19,7 @@
 // kept on the screen.
 #include "recomp/ui_scale.h"
 
+#include "mobile/mobile.h"
 #include "port/settings.h"
 
 #include <aurora/aurora.h>
@@ -113,7 +114,14 @@ void frameCallback(const AuroraWindowSize* size) {
     if (steamDeck()) autoScale = std::max(autoScale, 1.5f);
     if (sContext == Context::Setup) autoScale = std::max(autoScale, logicalH / 600.0f);
     // The menu needs about 560 x 330 units at 100% to be usable (tab bar, a few rows).
-    const float fit = std::min(logicalW / 560.0f, logicalH / 330.0f);
+    float fit = std::min(logicalW / 560.0f, logicalH / 330.0f);
+    if (mobile::enabled()) {
+        // Phone (src/mobile): read like a handheld console, about 1.5x the PC size in points, times
+        // the iPhone tab's UI Size; the full-screen menu scrolls, so it only has to fit sideways
+        // and show a few rows.
+        autoScale = 1.5f * mobile::uiMultiplier();
+        fit = std::min(logicalW / 560.0f, logicalH / 220.0f);
+    }
     sFit = stepDown(fit);
     sAuto = std::min(stepDown(autoScale), sFit);
     const int setting = port::settings().ui.menuScale;

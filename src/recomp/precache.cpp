@@ -35,6 +35,8 @@ std::filesystem::path exeDir() {
     wchar_t buf[MAX_PATH * 4];
     const DWORD n = GetModuleFileNameW(nullptr, buf, DWORD(std::size(buf)));
     return std::filesystem::path(std::wstring(buf, n)).parent_path();
+#elif defined(__APPLE__)
+    return port::exeDir();  // the app bundle, where pipelines.bin is shipped
 #else
     return std::filesystem::read_symlink("/proc/self/exe").parent_path();
 #endif

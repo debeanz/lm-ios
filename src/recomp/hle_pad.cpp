@@ -3,6 +3,7 @@
 #include "recomp/ghost_lights.h"
 #include "recomp/hle.h"
 
+#include "mobile/mobile.h"
 #include "port/options.h"
 #include "recomp/controls.h"
 #include "recomp/coop.h"
@@ -166,6 +167,7 @@ HLE(PADControlMotor) {
         log("[rumble] game PADControlMotor(chan %u, cmd %u) from %08X, retrace %u", c.r[3], c.r[4], c.lr,
             viRetraceCount());
     controls::controlMotor(c.r[3], c.r[4]);
+    mobile::onRumble(c.r[3], c.r[4]);  // phone: the Taptic Engine while the touch controller is used
 }
 HLE(PADSetSamplingRate) {}  // PAL release; sampling is the host's business
 
@@ -175,6 +177,7 @@ HLE(PADRead) {
     controls::beforeRead();  // port devices (hot-plug) and bindings from F1 > Controls
     const u32 motor = PADRead(st);
     controls::afterRead(st);  // dead zones, sensitivity; input test values
+    mobile::applyPad(st);     // phone: the on-screen GameCube controller on port 1 (src/mobile)
     logPad(st);
     if (menu::isOpen()) {  // the overlay menu owns input while open
         for (auto& s : st) {
