@@ -1,4 +1,6 @@
-// Phone look of the F1 menu's widgets (menu_phone.h): moonlit-mansion rows after Dusk's menus.
+// Phone look of the F1 menu's widgets (menu_phone.h), after Dusk's menu: plain rows with the label
+// in tracked capitals and the value as text on the right, a thin gold outline on the selected row,
+// a dot before values changed from their default. "Mansion night" colours (user's choice).
 #include "recomp/menu_phone.h"
 
 #include "mobile/native.h"
@@ -19,25 +21,21 @@
 namespace recomp::menu::phone {
 namespace {
 
-constexpr ImU32 kAccent = IM_COL32(242, 197, 92, 255);
-constexpr ImU32 kAccentSoft = IM_COL32(242, 197, 92, 56);
-constexpr ImU32 kAccentFaint = IM_COL32(242, 197, 92, 10);
-constexpr ImU32 kLavender = IM_COL32(143, 134, 179, 255);
-constexpr ImU32 kLavenderDim = IM_COL32(143, 134, 179, 120);
-constexpr ImU32 kKnob = IM_COL32(255, 243, 207, 255);
-constexpr ImU32 kInk = IM_COL32(26, 20, 36, 255);
-constexpr ImU32 kControlBg = IM_COL32(17, 16, 30, 170);
-
-// The selected item (tapped, or focused with a controller): its tooltip goes to the strip.
+// The selected item (tapped, or focused with a controller): its tooltip and default go to the
+// description column.
 ImGuiID sSelId = 0;
 std::string sSelTitle;
-std::string sDescTitle, sDescText;            // shown this frame (from last frame)
-std::string sNextTitle, sNextText;            // collected this frame
-bool sNextSet = false;
+std::string sDescTitle, sDescText, sDescDefault;  // shown this frame (from last frame)
+std::string sNextTitle, sNextText, sNextDefault;  // collected this frame
+bool sNextSet = false, sNextDefaultSet = false;
 int sSliderHeldFrame = -10;    // ImGui frame a phone slider last had the finger (dragged sideways)
 int sSliderActiveFrame = -10;  // ImGui frame a finger was last down on a phone slider
 ImGuiID sClaimedId = 0;        // the slider the finger is dragging
+float sDragT0 = 0.0f;          // its position when the finger went down
 bool sDefaultDone = false;     // the page's first row was made the controller's default focus
+// setNextDefault(): the default of the next widget when it is not the settings struct's own.
+bool sOverride = false;
+double sOverrideValue = 0.0;
 
 // The text before "##" (ImGui's ID suffix).
 std::string visible(const char* label) {
@@ -45,8 +43,11 @@ std::string visible(const char* label) {
     return hash ? std::string(label, hash) : std::string(label);
 }
 
-// Phone rows are full width: one placed with SameLine() after another starts its own line instead
-// (there is no room beside a full-width row; e.g. Debug > Font test's "Latin last line").
+std::string upper(std::string s) {
+    for (char& ch : s) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+    return s;
+}
+
 // The first row of a page is where the controller starts (menu opened, section changed).
 void defaultFocus() {
     if (sDefaultDone) return;
@@ -54,11 +55,15 @@ void defaultFocus() {
     ImGui::SetItemDefaultFocus();
 }
 
+// Phone rows are full width: one placed with SameLine() after another starts its own line instead
+// (there is no room beside a full-width row; e.g. Debug > Font test's "Latin last line").
 void ownLine() {
     if (ImGui::GetCurrentWindow()->DC.IsSameLine) ImGui::NewLine();
 }
 
-float rowHeight() { return std::round(ImGui::GetFrameHeight() * 1.55f); }
+float fs() { return ImGui::GetFontSize(); }
+float rowHeight() { return std::round(fs() * 2.45f); }
+float padX() { return std::round(fs() * 0.85f); }
 
 bool navActive() {
     const ImGuiContext& g = *GImGui;
@@ -77,9 +82,37 @@ void selectIfTouched(const std::string& title) {
 
 bool isSelected(ImGuiID id) { return id == sSelId; }
 
-// Full-width row: an invisible button of the row's size, the selection highlight (accent wash and a
-// bar on the left) and the label. Returns the pressed state; rect gets the row.
-bool row(const char* label, float h, ImRect& rect, bool& selectedOut) {
+// The default of a setting the widget edits in place: the same member of a default-constructed
+// Settings (every member has its first-install default). False for values outside the settings
+// (a local copy, e.g. a combo over an enum), which then show no dot and no default.
+const port::Settings& defaults() {
+    static const port::Settings d{};
+    return d;
+}
+template <typename T>
+bool defaultOf(const T* v, T& out) {
+    if (sOverride) {
+        sOverride = false;
+        out = T(sOverrideValue);
+        return true;
+    }
+    const auto* base = reinterpret_cast<const char*>(&port::settings());
+    const auto* p = reinterpret_cast<const char*>(v);
+    if (p < base || p + sizeof(T) > base + sizeof(port::Settings)) return false;
+    std::memcpy(&out, reinterpret_cast<const char*>(&defaults()) + (p - base), sizeof(T));
+    return true;
+}
+
+// Selected row: its default for the description column ("" when unknown).
+void noteDefault(bool sel, const std::string& text) {
+    if (!sel || sNextDefaultSet) return;
+    sNextDefault = text;
+    sNextDefaultSet = true;
+}
+
+// Row frame: an invisible button of the row's size, the faint row plate, the selection outline and
+// the label in tracked capitals. Returns the pressed state.
+bool row(const char* label, float h, ImRect& rect, bool& selOut) {
     ownLine();
     const float w = ImGui::GetContentRegionAvail().x;
     ImGui::PushID(label);
@@ -92,18 +125,22 @@ bool row(const char* label, float h, ImRect& rect, bool& selectedOut) {
     const bool sel = isSelected(ImGui::GetItemID());
     const bool held = ImGui::IsItemActive();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float r = ImGui::GetStyle().FrameRounding;
-    if (sel || held) {
-        dl->AddRectFilledMultiColor(rect.Min, rect.Max, held ? kAccentSoft : IM_COL32(242, 197, 92, 44), kAccentFaint,
-                                    kAccentFaint, held ? kAccentSoft : IM_COL32(242, 197, 92, 44));
-        dl->AddRectFilled(rect.Min, ImVec2(rect.Min.x + std::max(2.0f, r * 0.45f), rect.Max.y), kAccent);
-    }
-    const float pad = ImGui::GetStyle().FramePadding.x;
-    const ImVec2 ts = ImGui::CalcTextSize(title.c_str());
-    dl->AddText(ImVec2(rect.Min.x + pad + r * 0.6f, rect.Min.y + (h - ts.y) * 0.5f), ImGui::GetColorU32(ImGuiCol_Text),
-                title.c_str());
-    selectedOut = sel;
+    const float rr = std::round(h * 0.17f);
+    dl->AddRectFilled(rect.Min, rect.Max, held ? color::kRowPressed : sel ? color::kRowSelected : color::kRow, rr);
+    if (sel) dl->AddRect(rect.Min, rect.Max, color::kAccent, rr, 0, std::max(1.0f, fs() * 0.08f));
+    const float size = std::round(fs() * 0.9f);
+    trackedText(dl, ImVec2(rect.Min.x + padX(), rect.Min.y + (h - size) * 0.5f), size, color::kText, upper(title).c_str(),
+                size * 0.07f);
+    selOut = sel;
     return pressed;
+}
+
+// The value on the right of a row, with a dot when it is not the default.
+void rowValue(const ImRect& rect, const char* value, bool changed) {
+    std::string t = changed ? std::string("\xE2\x80\xA2 ") + value : std::string(value);  // U+2022 bullet
+    const ImVec2 ts = ImGui::CalcTextSize(t.c_str());
+    ImGui::GetWindowDrawList()->AddText(ImVec2(rect.Max.x - padX() - ts.x, rect.Min.y + (rect.GetHeight() - ts.y) * 0.5f),
+                                        color::kText, t.c_str());
 }
 
 // Controller: left/right on the focused item; returns -1, 0, +1 (with key repeat).
@@ -124,85 +161,84 @@ int sideStep() {
     return 0;
 }
 
-void arrow(ImDrawList* dl, ImVec2 c, float s, int dir, bool hot) {
-    const ImU32 col = hot ? kAccent : IM_COL32(227, 223, 240, 230);
-    const ImVec2 a(c.x + dir * s * 0.45f, c.y), b(c.x - dir * s * 0.35f, c.y - s * 0.5f), d(c.x - dir * s * 0.35f, c.y + s * 0.5f);
-    dl->AddTriangleFilled(a, b, d, col);
-}
-
-// "◀ value ▶" on the right of a row; returns the step taken by the arrows (or 0).
-int valueArrows(const ImRect& rect, float h, const char* value, bool pressed) {
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float pad = ImGui::GetStyle().FramePadding.x;
-    const float box = h * 0.62f;
-    const float valW = std::max(ImGui::CalcTextSize(value).x, h * 1.9f);
-    const float right = rect.Max.x - pad;
-    const ImRect next(ImVec2(right - box, rect.GetCenter().y - box * 0.5f), ImVec2(right, rect.GetCenter().y + box * 0.5f));
-    const ImRect prev(ImVec2(next.Min.x - valW - box - pad, next.Min.y), ImVec2(next.Min.x - valW - pad, next.Max.y));
-    const float rr = ImGui::GetStyle().FrameRounding * 0.8f;
-    for (const ImRect* b : {&prev, &next}) {
-        dl->AddRectFilled(b->Min, b->Max, kControlBg, rr);
-        dl->AddRect(b->Min, b->Max, kLavenderDim, rr);
-    }
-    // A tap on an arrow (where the finger went down) steps that way; elsewhere on the row: forward.
-    int step = 0;
-    if (pressed) {
-        const ImVec2 at = ImGui::GetIO().MouseClickedPos[0];
-        const ImRect hitPrev(ImVec2(prev.Min.x - pad, rect.Min.y), ImVec2(prev.Max.x + pad * 0.5f, rect.Max.y));
-        step = hitPrev.Contains(at) ? -1 : 1;
-    }
-    const bool held = ImGui::IsItemActive();
-    const ImVec2 at = ImGui::GetIO().MouseClickedPos[0];
-    arrow(dl, prev.GetCenter(), box * 0.42f, -1, held && prev.Contains(at));
-    arrow(dl, next.GetCenter(), box * 0.42f, 1, held && !prev.Contains(at));
-    const ImVec2 ts = ImGui::CalcTextSize(value);
-    dl->AddText(ImVec2(prev.Max.x + (next.Min.x - prev.Max.x - ts.x) * 0.5f, rect.Min.y + (h - ts.y) * 0.5f),
-                IM_COL32(207, 200, 232, 255), value);
-    return step;
+void tick() {
+    if (port::settings().mobile.haptics) mobile::native::haptic(0);
 }
 
 }  // namespace
 
+void trackedText(ImDrawList* dl, ImVec2 pos, float size, unsigned col, const char* text, float tracking) {
+    ImFont* font = ImGui::GetFont();
+    const char* end = text + std::strlen(text);
+    float x = pos.x;
+    for (const char* p = text; p < end;) {
+        unsigned int c = 0;
+        const int n = ImTextCharFromUtf8(&c, p, end);
+        if (n <= 0) break;
+        dl->AddText(font, size, ImVec2(std::round(x), pos.y), col, p, p + n);
+        x += font->CalcTextSizeA(size, FLT_MAX, 0.0f, p, p + n).x + tracking;
+        p += n;
+    }
+}
+
+float trackedWidth(float size, const char* text, float tracking) {
+    ImFont* font = ImGui::GetFont();
+    const char* end = text + std::strlen(text);
+    float w = 0;
+    int count = 0;
+    for (const char* p = text; p < end;) {
+        unsigned int c = 0;
+        const int n = ImTextCharFromUtf8(&c, p, end);
+        if (n <= 0) break;
+        w += font->CalcTextSizeA(size, FLT_MAX, 0.0f, p, p + n).x;
+        count++;
+        p += n;
+    }
+    return w + tracking * float(std::max(count - 1, 0));
+}
+
+void setNextDefault(double value) {
+    sOverride = true;
+    sOverrideValue = value;
+}
+
 bool checkbox(const char* label, bool* v) {
-    const float h = rowHeight();
     ImRect rect;
     bool sel = false;
-    bool pressed = row(label, h, rect, sel);
+    bool pressed = row(label, rowHeight(), rect, sel);
     const int side = sideStep();
     if (side != 0 && ((side > 0) != *v)) pressed = true;  // right turns on, left turns off
-    if (pressed) *v = !*v;
-    // On / Off pill on the right.
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float pad = ImGui::GetStyle().FramePadding.x;
-    const float pw = h * 1.45f, ph = h * 0.58f;
-    const ImVec2 mx(rect.Max.x - pad, rect.GetCenter().y + ph * 0.5f), mn(mx.x - pw, mx.y - ph);
-    const float rr = ImGui::GetStyle().FrameRounding;
-    if (*v) {
-        dl->AddRectFilled(mn, mx, kAccent, rr);
-    } else {
-        dl->AddRectFilled(mn, mx, kControlBg, rr);
-        dl->AddRect(mn, mx, kLavenderDim, rr);
+    if (pressed) {
+        *v = !*v;
+        tick();
     }
-    const char* t = *v ? "On" : "Off";
-    const ImVec2 ts = ImGui::CalcTextSize(t);
-    dl->AddText(ImVec2((mn.x + mx.x - ts.x) * 0.5f, (mn.y + mx.y - ts.y) * 0.5f), *v ? kInk : IM_COL32(154, 147, 184, 255), t);
-    if (pressed && port::settings().mobile.haptics) mobile::native::haptic(0);
+    bool def = false;
+    const bool known = defaultOf(v, def);
+    rowValue(rect, *v ? "On" : "Off", known && def != *v);
+    noteDefault(sel, known ? (def ? "On" : "Off") : "");
     return pressed;
 }
 
 bool combo(const char* label, int* current, const char* const items[], int count) {
     if (count <= 0) return false;
-    const float h = rowHeight();
     ImRect rect;
     bool sel = false;
-    const bool pressed = row(label, h, rect, sel);
-    const int idx = std::clamp(*current, 0, count - 1);
-    int step = valueArrows(rect, h, items[idx] ? items[idx] : "", pressed);
-    if (step == 0) step = sideStep();
-    if (step == 0) return false;
-    *current = ((idx + step) % count + count) % count;
-    if (port::settings().mobile.haptics) mobile::native::haptic(0);
-    return true;
+    const bool pressed = row(label, rowHeight(), rect, sel);
+    int idx = std::clamp(*current, 0, count - 1);
+    // A tap steps to the next value (Dusk: a click cycles); left/right on a controller step either way.
+    int step = pressed ? 1 : sideStep();
+    bool changed = false;
+    if (step != 0) {
+        idx = ((idx + step) % count + count) % count;
+        *current = idx;
+        changed = true;
+        tick();
+    }
+    int def = 0;
+    const bool known = defaultOf(current, def) && def >= 0 && def < count;
+    rowValue(rect, items[idx] ? items[idx] : "", known && def != idx);
+    noteDefault(sel, known && items[def] ? items[def] : "");
+    return changed;
 }
 
 bool combo(const char* label, int* current, const char* zeroSeparated) {
@@ -213,56 +249,49 @@ bool combo(const char* label, int* current, const char* zeroSeparated) {
 }
 
 namespace {
-// Two-line slider row: label and value on top, a thin rail with a glowing knob below. Works on a
-// normalized position; `stepNorm` is one step of the controller's left/right.
-bool sliderRow(const char* label, float& t, const char* valueText, float stepNorm) {
+// Slider row: the same row as the others, value on the right, and a thin line along its bottom
+// edge showing where the value sits. A sideways drag on the row changes it relative to where the
+// finger went down (no jump to the finger); a swipe up or down scrolls the list instead. Works on
+// a normalized position; `stepNorm` is one step of the controller's left/right.
+bool sliderRow(const char* label, float& t, const char* valueText, bool notDefault, float stepNorm) {
     ownLine();
     const float h = rowHeight();
     const float w = ImGui::GetContentRegionAvail().x;
     const std::string title = visible(label);
     ImGui::PushID(label);
-    const ImVec2 start = ImGui::GetCursorScreenPos();
-    const bool hit = ImGui::InvisibleButton("##slider", ImVec2(w, h * 1.45f));
+    ImGui::InvisibleButton("##slider", ImVec2(w, h));
     defaultFocus();
     ImGui::PopID();
     const ImRect rect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     selectIfTouched(title);
-    const bool sel = isSelected(ImGui::GetItemID());
     const ImGuiID id = ImGui::GetItemID();
+    const bool sel = isSelected(id);
     const bool active = ImGui::IsItemActive();
-    // A finger on the row takes the knob only once it moves sideways (or on a tap): a swipe up or
-    // down that starts on a slider scrolls the list and leaves the value alone.
     const ImGuiIO& io = ImGui::GetIO();
     const bool pointer = io.MousePos.x > -1e6f;
+    if (ImGui::IsItemActivated()) sDragT0 = t;
     if (active) {
         sSliderActiveFrame = ImGui::GetFrameCount();
         const float dx = io.MousePos.x - io.MouseClickedPos[0].x, dy = io.MousePos.y - io.MouseClickedPos[0].y;
-        if (sClaimedId != id && pointer && std::fabs(dx) > ImGui::GetFontSize() * 0.25f && std::fabs(dx) >= std::fabs(dy))
-            sClaimedId = id;
+        if (sClaimedId != id && pointer && std::fabs(dx) > fs() * 0.25f && std::fabs(dx) >= std::fabs(dy)) sClaimedId = id;
+    } else if (sClaimedId == id) {
+        sClaimedId = 0;
     }
-    const bool wasDragged = !active && sClaimedId == id;  // released after a drag: not a tap
-    if (wasDragged) sClaimedId = 0;
     const bool held = active && sClaimedId == id;
     if (held) sSliderHeldFrame = ImGui::GetFrameCount();
+
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float pad = ImGui::GetStyle().FramePadding.x, r = ImGui::GetStyle().FrameRounding;
-    if (sel || held) {
-        dl->AddRectFilledMultiColor(rect.Min, rect.Max, IM_COL32(242, 197, 92, 44), kAccentFaint, kAccentFaint, IM_COL32(242, 197, 92, 44));
-        dl->AddRectFilled(rect.Min, ImVec2(rect.Min.x + std::max(2.0f, r * 0.45f), rect.Max.y), kAccent);
-    }
-    const float lineH = h * 0.8f;
-    const ImVec2 ts = ImGui::CalcTextSize(title.c_str());
-    dl->AddText(ImVec2(start.x + pad + r * 0.6f, start.y + (lineH - ts.y) * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), title.c_str());
-    const ImVec2 vs = ImGui::CalcTextSize(valueText);
-    dl->AddText(ImVec2(rect.Max.x - pad - vs.x, start.y + (lineH - vs.y) * 0.5f), IM_COL32(207, 200, 232, 255), valueText);
-    // Rail
-    const float x0 = rect.Min.x + pad + r * 0.6f + h * 0.2f, x1 = rect.Max.x - pad - h * 0.2f;
-    const float y = start.y + lineH + (rect.Max.y - start.y - lineH) * 0.45f;
+    const float rr = std::round(h * 0.17f);
+    dl->AddRectFilled(rect.Min, rect.Max, held ? color::kRowPressed : sel ? color::kRowSelected : color::kRow, rr);
+    if (sel || held) dl->AddRect(rect.Min, rect.Max, color::kAccent, rr, 0, std::max(1.0f, fs() * 0.08f));
+    const float size = std::round(fs() * 0.9f);
+    trackedText(dl, ImVec2(rect.Min.x + padX(), rect.Min.y + (h - size) * 0.5f), size, color::kText, upper(title).c_str(),
+                size * 0.07f);
+
+    const float x0 = rect.Min.x + padX(), x1 = rect.Max.x - padX();
     bool changed = false;
-    // Dragging: the knob follows the finger. A tap (released without a scroll): the knob jumps there.
-    const float fingerX = held && pointer ? io.MousePos.x : (hit && !wasDragged) ? io.MouseClickedPos[0].x : -FLT_MAX;
-    if (fingerX > -1e6f) {
-        const float nt = std::clamp((fingerX - x0) / std::max(x1 - x0, 1.0f), 0.0f, 1.0f);
+    if (held && pointer) {
+        const float nt = std::clamp(sDragT0 + (io.MousePos.x - io.MouseClickedPos[0].x) / std::max(x1 - x0, 1.0f), 0.0f, 1.0f);
         if (nt != t) {
             t = nt;
             changed = true;
@@ -273,15 +302,15 @@ bool sliderRow(const char* label, float& t, const char* valueText, float stepNor
         if (nt != t) {
             t = nt;
             changed = true;
+            tick();
         }
     }
-    const float th = std::max(3.0f, h * 0.09f);
-    dl->AddRectFilled(ImVec2(x0, y - th * 0.5f), ImVec2(x1, y + th * 0.5f), IM_COL32(143, 134, 179, 90), th);
-    const float kx = x0 + (x1 - x0) * t;
-    dl->AddRectFilled(ImVec2(x0, y - th * 0.5f), ImVec2(kx, y + th * 0.5f), kAccent, th);
-    const float kr = h * (held ? 0.24f : 0.2f);
-    dl->AddCircleFilled(ImVec2(kx, y), kr * 1.9f, IM_COL32(242, 197, 92, held ? 60 : 32), 32);
-    dl->AddCircleFilled(ImVec2(kx, y), kr, kKnob, 32);
+    rowValue(rect, valueText, notDefault);
+    // Where the value sits: a hairline along the bottom of the row, brighter while selected.
+    const float th = std::max(1.5f, fs() * 0.12f), y = rect.Max.y - th - std::max(1.0f, fs() * 0.1f);
+    dl->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + th), color::kLine, th);
+    dl->AddRectFilled(ImVec2(x0, y), ImVec2(x0 + (x1 - x0) * t, y + th),
+                      sel || held ? color::kAccent : (color::kAccent & 0x00FFFFFFu) | (110u << 24), th);
     return changed;
 }
 
@@ -296,14 +325,24 @@ float stepOf(const char* format) {
 bool sliderFloat(const char* label, float* v, float min, float max, const char* format) {
     const float lo = std::min(min, max), hi = std::max(min, max), span = std::max(hi - lo, 1e-6f);
     float t = std::clamp((*v - lo) / span, 0.0f, 1.0f);
+    const char* fmt = format ? format : "%.2f";
     char text[64];
-    std::snprintf(text, sizeof(text), format ? format : "%.2f", *v);
-    const float step = stepOf(format ? format : "%.2f");
+    std::snprintf(text, sizeof(text), fmt, *v);
+    const float step = stepOf(fmt);
+    float def = 0;
+    const bool known = defaultOf(v, def);
+    const bool notDefault = known && std::fabs(def - *v) > step * 0.5f;
+    bool sel = false;
     // Controller steps: one shown digit, but at most 100 presses across the range.
-    const float stepNorm = std::max(step / span, 0.01f);
-    if (!sliderRow(label, t, text, stepNorm)) return false;
-    float nv = lo + t * span;
-    nv = std::clamp(std::round(nv / step) * step, lo, hi);
+    const bool moved = sliderRow(label, t, text, notDefault, std::max(step / span, 0.01f));
+    sel = isSelected(ImGui::GetItemID());
+    if (known) {
+        char d[64];
+        std::snprintf(d, sizeof(d), fmt, def);
+        noteDefault(sel, d);
+    }
+    if (!moved) return false;
+    const float nv = std::clamp(std::round((lo + t * span) / step) * step, lo, hi);
     if (nv == *v) return false;
     *v = nv;
     return true;
@@ -313,11 +352,21 @@ bool sliderInt(const char* label, int* v, int min, int max, const char* format) 
     const int lo = std::min(min, max), hi = std::max(min, max);
     const float span = float(std::max(hi - lo, 1));
     float t = std::clamp(float(*v - lo) / span, 0.0f, 1.0f);
-    char text[64];
     // (A slider's format may be a fixed label such as "Match window" without %d.)
-    if (format && std::strstr(format, "%")) std::snprintf(text, sizeof(text), format, *v);
+    const bool hasNumber = format && std::strstr(format, "%");
+    char text[64];
+    if (hasNumber) std::snprintf(text, sizeof(text), format, *v);
     else std::snprintf(text, sizeof(text), "%s", format ? format : "");
-    if (!sliderRow(label, t, text, std::max(1.0f / span, 0.01f))) return false;
+    int def = 0;
+    const bool known = defaultOf(v, def);
+    const bool moved = sliderRow(label, t, text, known && def != *v, std::max(1.0f / span, 0.01f));
+    if (known) {
+        char d[64];
+        if (hasNumber) std::snprintf(d, sizeof(d), format, def);
+        else std::snprintf(d, sizeof(d), "%d", def);
+        noteDefault(isSelected(ImGui::GetItemID()), d);
+    }
+    if (!moved) return false;
     const int nv = std::clamp(lo + int(std::lround(t * span)), lo, hi);
     if (nv == *v) return false;
     *v = nv;
@@ -326,14 +375,13 @@ bool sliderInt(const char* label, int* v, int min, int max, const char* format) 
 
 void separatorText(const char* label) {
     ownLine();
-    // Section heading: small lavender capitals, a little air above (Dusk's group headings).
-    ImGui::Dummy(ImVec2(0, ImGui::GetTextLineHeight() * 0.45f));
-    std::string up = visible(label);
-    for (char& ch : up) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+    // Group heading (Dusk): small tracked capitals in the muted heading colour, air above.
+    ImGui::Dummy(ImVec2(0, std::round(fs() * 0.55f)));
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float pad = ImGui::GetStyle().FramePadding.x;
-    ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.82f, ImVec2(p.x + pad, p.y), kLavender, up.c_str());
-    ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.95f));
+    const float size = std::round(fs() * 0.78f);
+    trackedText(ImGui::GetWindowDrawList(), ImVec2(p.x + std::round(fs() * 0.3f), p.y), size, color::kHeading,
+                upper(visible(label)).c_str(), size * 0.12f);
+    ImGui::Dummy(ImVec2(0, std::round(size + fs() * 0.35f)));
 }
 
 void itemTooltip(const char* fmt, va_list args) {
@@ -344,7 +392,7 @@ void itemTooltip(const char* fmt, va_list args) {
     if (ImGui::GetItemID() != sSelId || sNextSet) return;
     char buf[2048];
     std::vsnprintf(buf, sizeof(buf), fmt, args);
-    // The PC tooltips are wrapped by hand for a mouse tooltip: let the strip wrap them instead.
+    // The PC tooltips are wrapped by hand for a mouse tooltip: let the column wrap them instead.
     std::string text(buf);
     for (size_t i = 0; i < text.size(); i++)
         if (text[i] == '\n') text[i] = (i + 1 < text.size() && text[i + 1] == '\n') ? '\n' : ' ';
@@ -355,22 +403,21 @@ void itemTooltip(const char* fmt, va_list args) {
 
 void beginFrame() {
     sDefaultDone = false;
+    sOverride = false;
     if (sNextSet) {
         sDescTitle = sNextTitle;
         sDescText = sNextText;
-    } else if (sSelId == 0) {
-        sDescTitle.clear();
-        sDescText.clear();
     } else {
-        // Selected, but it has no tooltip: just its name.
-        sDescTitle = sSelTitle;
+        sDescTitle = sSelId ? sSelTitle : std::string();  // selected without a tooltip: just its name
         sDescText.clear();
     }
-    sNextSet = false;
+    sDescDefault = sNextDefaultSet ? sNextDefault : std::string();
+    sNextSet = sNextDefaultSet = false;
 }
 
 const char* descriptionTitle() { return sDescTitle.c_str(); }
 const char* descriptionText() { return sDescText.c_str(); }
+const char* descriptionDefault() { return sDescDefault.c_str(); }
 
 bool sliderHeld() { return ImGui::GetCurrentContext() && ImGui::GetFrameCount() - sSliderHeldFrame <= 1; }
 bool sliderTouched() { return ImGui::GetCurrentContext() && ImGui::GetFrameCount() - sSliderActiveFrame <= 1; }
@@ -380,7 +427,8 @@ void clearSelection() {
     sSelTitle.clear();
     sDescTitle.clear();
     sDescText.clear();
-    sNextSet = false;
+    sDescDefault.clear();
+    sNextSet = sNextDefaultSet = false;
 }
 
 }  // namespace recomp::menu::phone

@@ -10,6 +10,7 @@
 #include "port/update.h"
 #include "recomp/frame.h"
 #include "recomp/menu.h"
+#include "recomp/menu_phone.h"
 #include "recomp/pacing.h"
 #include "recomp/ui_scale.h"
 
@@ -89,6 +90,11 @@ constexpr const char* kUpscalingLabels[] = {"Off", "MetalFX"};
 // MetalFX upscaling chosen and possible on this device (Aurora 0240).
 bool metalfxOn() { return ms().upscaling == 1 && aurora_metalfx_available(); }
 fs::path metalfxTrialMarker() { return native::documentsDir() / "Logs" / "metalfx_trial"; }
+// First-start render height by memory, as a quality tier (8 GB: 1080, 6 GB: 900, less: 720).
+int defaultResolution() {
+    const long long ram = native::physicalMemoryMB();
+    return ram >= 7500 ? 2 : ram >= 5500 ? 3 : 4;
+}
 
 // Render height of the Resolution row, never above the panel; 0 = the panel's own. With MetalFX,
 // "Native" renders at 2/3 of the panel instead (at the panel's own size there is nothing to upscale).
@@ -267,7 +273,7 @@ void beforeAurora() {
         s.video.msaa = 1;
         s.ui.menuScale = 0;
         const long long ram = native::physicalMemoryMB();
-        s.mobile.resolution = ram >= 7500 ? 2 : ram >= 5500 ? 3 : 4;
+        s.mobile.resolution = defaultResolution();
         port::saveSettings();
         sessionlog::line("settings", "first start: phone defaults (60 fps, %s for %lld MB RAM) saved",
                          kResolutionLabels[s.mobile.resolution], ram);
@@ -495,6 +501,7 @@ bool drawSettingsTab() {
         std::snprintf(nativeLabel, sizeof(nativeLabel), "Native (%ux%u)", std::max(ws.native_fb_width, ws.native_fb_height),
                       std::min(ws.native_fb_width, ws.native_fb_height));
         const char* resLabels[5] = {nativeLabel, kResolutionLabels[1], kResolutionLabels[2], kResolutionLabels[3], kResolutionLabels[4]};
+        recomp::menu::phone::setNextDefault(defaultResolution());  // first start: by memory
         if (recomp::menu::Combo("Resolution", &m.resolution, resLabels, 5)) {
             display = true;
             note("Resolution", resLabels, m.resolution);
@@ -544,6 +551,7 @@ bool drawSettingsTab() {
     recomp::menu::SeparatorText("Performance");
     {
         int fr = frameRateIndex();
+        recomp::menu::phone::setNextDefault(1);  // 60 FPS, the first-start default
         if (recomp::menu::Combo("Frame rate", &fr, kFrameRateLabels, 3)) {
             s.video.targetFps = kFrameRates[fr];
             s.video.matchDisplay = false;

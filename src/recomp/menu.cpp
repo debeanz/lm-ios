@@ -1921,7 +1921,16 @@ void fpsOverlay() {
     static auto last = clock::now();
     static int frames = 0;
     static float fps = 0.0f;
-    frames++;
+    // Phone at 30 FPS: the screen runs at 60 for the menu and overlays (frame::hostFps); the
+    // counter counts the game frames shown, which is the rate the player chose.
+    static auto sLastSeq = recomp::interp::lastPresent().bSeq;
+    bool counts = true;
+    if (recomp::frame::gameFramesOnly() && recomp::frame::interpolating()) {
+        const auto seq = recomp::interp::lastPresent().bSeq;
+        counts = seq != sLastSeq;
+        sLastSeq = seq;
+    }
+    if (counts) frames++;
     const auto now = clock::now();
     const float dt = std::chrono::duration<float>(now - last).count();
     if (dt >= 0.5f) {
@@ -1951,12 +1960,12 @@ void fpsOverlay() {
         const float h = 2 * padY + ns.y + (note ? ss.y + 1.0f * s : 0.0f);
         const ImVec2 p(insetL + 8.0f * s, insetT + 8.0f * s);
         const float rr = std::min(10.0f * s, h * 0.5f);
-        dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(18, 16, 30, 215), rr);
-        dl->AddRect(p, ImVec2(p.x + w, p.y + h), IM_COL32(143, 134, 179, 150), rr, 0, std::max(1.0f, s));
+        dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), phone::color::kPanel, rr);
+        dl->AddRect(p, ImVec2(p.x + w, p.y + h), phone::color::kBorder, rr, 0, std::max(1.0f, std::round(s)));
         const int target = port::settings().video.targetFps;
         const bool low = fps > 0.0f && target > 0 && fps < float(target) * 0.9f;
-        dl->AddText(font, big, ImVec2(p.x + padX, p.y + padY), low ? IM_COL32(236, 140, 118, 255) : IM_COL32(242, 197, 92, 255), num);
-        dl->AddText(font, small, ImVec2(p.x + padX + ns.x + gap, p.y + padY + ns.y - ls.y - 1.0f * s), IM_COL32(143, 134, 179, 255),
+        dl->AddText(font, big, ImVec2(p.x + padX, p.y + padY), low ? IM_COL32(236, 140, 118, 255) : phone::color::kAccent, num);
+        dl->AddText(font, small, ImVec2(p.x + padX + ns.x + gap, p.y + padY + ns.y - ls.y - 1.0f * s), phone::color::kHeading,
                     "FPS");
         if (note) dl->AddText(font, small, ImVec2(p.x + padX, p.y + padY + ns.y + 1.0f * s), IM_COL32(154, 147, 184, 255), st);
         return;
@@ -2251,110 +2260,112 @@ void drawEyeIcon(ImDrawList* dl, ImVec2 c, float s, ImU32 col, bool crossed) {
 }
 
 void drawPhoneMenu(bool& open) {
+    namespace col = phone::color;
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     phone::beginFrame();
     const float s = recomp::ui::scale();
+    const float fs = ImGui::GetFontSize();
     float l = 0, t = 0, r = 0, b = 0;
     mobile::safeAreaInsets(l, t, r, b);
     const ImVec2 disp = io.DisplaySize;
-    const float margin = 8.0f * s;
-    const float availW = disp.x - l - r, availH = disp.y - t - b;
-    const float width = std::clamp(availW * 0.56f, std::min(360.0f * s, availW - 2 * margin), availW - 2 * margin);
-    ImGui::SetNextWindowPos(ImVec2(disp.x - r - width - margin, t + margin), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(width, availH - 2 * margin), ImGuiCond_Always);
+    // One panel over most of the screen (Dusk), clear of the camera housing; translucent, so the
+    // game shows through (the eye button fades it out completely).
+    const float mx = std::round(std::max(l, r) + 16.0f * s), my = std::round(10.0f * s);
+    ImGui::SetNextWindowPos(ImVec2(mx, t + my), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(disp.x - 2 * mx, disp.y - t - b - 2 * my), ImGuiCond_Always);
     if (sPhoneJustOpened) ImGui::SetNextWindowFocus();
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, sPhoneHidden ? 0.12f : 1.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
                                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
     if (ImGui::Begin(kPhoneMenuWindow, nullptr, flags)) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
-        const ImU32 accent = IM_COL32(242, 197, 92, 255), lavender = IM_COL32(143, 134, 179, 255);
-        const ImU32 text = ImGui::GetColorU32(ImGuiCol_Text);
-        const float headerH = std::round(ImGui::GetFrameHeight() * 1.75f);
+        const float rounding = std::round(10.0f * s), hair = std::max(1.0f, std::round(s));
+        dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), col::kPanel, rounding);
+        dl->AddRect(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), col::kBorder, rounding, 0, hair);
+        const float headerH = std::round(fs * 3.1f);
         const float iconW = headerH;
-        // Header band
-        dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + headerH), IM_COL32(217, 217, 240, 20), ImGui::GetStyle().WindowRounding,
-                          ImDrawFlags_RoundCornersTop);
-        // Tabs: a strip that scrolls sideways.
-        ImGui::SetCursorScreenPos(wp);
-        ImGui::BeginChild("##tabs", ImVec2(ws.x - 2 * iconW, headerH), ImGuiChildFlags_None,
+
+        // Tabs: tracked capitals, the open one white with a gold underline. They fit across a phone
+        // in landscape; on a narrower screen the strip scrolls sideways.
+        ImGui::SetCursorScreenPos(ImVec2(wp.x + std::round(8.0f * s), wp.y));
+        ImGui::BeginChild("##tabs", ImVec2(ws.x - 2 * iconW - std::round(8.0f * s), headerH), ImGuiChildFlags_None,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
         {
             ImDrawList* tdl = ImGui::GetWindowDrawList();
-            const float padX = 14.0f * s;
+            const float size = std::round(fs * 0.86f), tracking = size * 0.11f, padX = std::round(fs * 0.95f);
             for (int i = 0; i < kPhoneTabCount; i++) {
                 if (i) ImGui::SameLine(0, 0);
                 std::string label = kPhoneTabs[i];
                 for (char& ch : label) ch = char(std::toupper(static_cast<unsigned char>(ch)));
-                const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+                const float tw = phone::trackedWidth(size, label.c_str(), tracking);
                 ImGui::PushID(i);
-                if (ImGui::InvisibleButton("##tab", ImVec2(ts.x + 2 * padX, headerH))) selectPhoneTab(i);
+                if (ImGui::InvisibleButton("##tab", ImVec2(std::round(tw + 2 * padX), headerH))) selectPhoneTab(i);
                 ImGui::PopID();
-                const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                const ImVec2 mn = ImGui::GetItemRectMin(), mxr = ImGui::GetItemRectMax();
                 const bool on = i == sPhoneTab;
                 if (on) {
-                    tdl->AddRectFilledMultiColor(mn, mx, IM_COL32(242, 197, 92, 0), IM_COL32(242, 197, 92, 0), IM_COL32(242, 197, 92, 40),
-                                                 IM_COL32(242, 197, 92, 40));
-                    tdl->AddRectFilled(ImVec2(mn.x, mx.y - 3.0f * s), mx, accent);
+                    tdl->AddRectFilled(ImVec2(mn.x + padX * 0.6f, mxr.y - 2.0f * hair), ImVec2(mxr.x - padX * 0.6f, mxr.y), col::kAccent);
                     if (sPhoneTabChanged) ImGui::SetScrollHereX(0.5f);
                 }
-                tdl->AddText(ImVec2(mn.x + padX, mn.y + (headerH - ts.y) * 0.5f),
-                             on ? text : IM_COL32(227, 223, 240, ImGui::IsItemActive() ? 200 : 95), label.c_str());
+                phone::trackedText(tdl, ImVec2(mn.x + padX, mn.y + (headerH - size) * 0.5f), size,
+                                   on ? col::kWhite : ImGui::IsItemActive() ? col::kText : col::kTabMuted, label.c_str(), tracking);
             }
-            // Touch: sideways swipes on the strip scroll it.
             ImVec2 drag, start;
             const ImRect strip(ImGui::GetWindowPos(), ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(),
                                                              ImGui::GetWindowPos().y + headerH));
             if (mobile::touch::scrollFor(strip, drag, start)) ImGui::SetScrollX(ImGui::GetScrollX() - drag.x);
-            // More tabs to the right: a fade and a chevron.
             if (ImGui::GetScrollX() < ImGui::GetScrollMaxX() - 1.0f) {
-                const ImVec2 cmx(strip.Max.x, strip.Max.y), cmn(strip.Max.x - headerH * 0.9f, strip.Min.y);
+                // More tabs to the right: a gold chevron on a plate of the panel colour.
+                const float cw = std::round(fs * 1.6f);
                 tdl->PushClipRectFullScreen();
-                tdl->AddRectFilledMultiColor(cmn, cmx, IM_COL32(24, 21, 38, 0), IM_COL32(24, 21, 38, 245), IM_COL32(24, 21, 38, 245),
-                                             IM_COL32(24, 21, 38, 0));
-                const ImVec2 cc(cmx.x - headerH * 0.28f, (cmn.y + cmx.y) * 0.5f);
-                const float cs = headerH * 0.14f;
+                tdl->AddRectFilled(ImVec2(strip.Max.x - cw, strip.Min.y + hair), ImVec2(strip.Max.x, strip.Max.y - hair),
+                                   IM_COL32(19, 18, 31, 255));
+                const ImVec2 cc(strip.Max.x - cw * 0.45f, (strip.Min.y + strip.Max.y) * 0.5f);
+                const float cs = fs * 0.32f;
                 tdl->AddPolyline(std::array<ImVec2, 3>{ImVec2(cc.x - cs * 0.5f, cc.y - cs), ImVec2(cc.x + cs * 0.5f, cc.y),
                                                        ImVec2(cc.x - cs * 0.5f, cc.y + cs)}
                                      .data(),
-                                 3, accent, 0, std::max(1.5f, 2.2f * s));
+                                 3, col::kAccent, 0, std::max(1.5f, 1.6f * s));
                 tdl->PopClipRect();
             }
         }
         ImGui::EndChild();
-        // Eye (hide the panel to look at the game) and close.
+        // Eye (fade the panel to look at the game) and close: thin line icons, no frames.
         const auto iconButton = [&](const char* id, float x, auto drawIcon) {
             ImGui::SetCursorScreenPos(ImVec2(x, wp.y));
             const bool pressed = ImGui::InvisibleButton(id, ImVec2(iconW, headerH));
-            const ImVec2 c((ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) * 0.5f, (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
-            dl->AddLine(ImVec2(x, wp.y + headerH * 0.2f), ImVec2(x, wp.y + headerH * 0.8f), IM_COL32(143, 134, 179, 120), 1.0f);
-            if (ImGui::IsItemActive()) dl->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32(242, 197, 92, 50));
-            drawIcon(c);
+            const ImVec2 c((ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) * 0.5f,
+                           (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
+            drawIcon(c, ImGui::IsItemActive() ? col::kAccent : col::kText);
             return pressed;
         };
-        if (iconButton("##eye", wp.x + ws.x - 2 * iconW, [&](ImVec2 c) { drawEyeIcon(dl, c, headerH * 0.24f, text, sPhoneHidden); }))
+        if (iconButton("##eye", wp.x + ws.x - 2 * iconW,
+                       [&](ImVec2 c, ImU32 ic) { drawEyeIcon(dl, c, fs * 0.62f, ic, sPhoneHidden); }))
             sPhoneHidden = !sPhoneHidden;
-        if (iconButton("##close", wp.x + ws.x - iconW, [&](ImVec2 c) {
-                const float k = headerH * 0.17f, w = std::max(1.5f, 2.4f * s);
-                dl->AddLine(ImVec2(c.x - k, c.y - k), ImVec2(c.x + k, c.y + k), text, w);
-                dl->AddLine(ImVec2(c.x - k, c.y + k), ImVec2(c.x + k, c.y - k), text, w);
+        if (iconButton("##close", wp.x + ws.x - iconW, [&](ImVec2 c, ImU32 ic) {
+                const float k = fs * 0.42f, w = std::max(1.5f, 1.8f * s);
+                dl->AddLine(ImVec2(c.x - k, c.y - k), ImVec2(c.x + k, c.y + k), ic, w);
+                dl->AddLine(ImVec2(c.x - k, c.y + k), ImVec2(c.x + k, c.y - k), ic, w);
             }))
             open = false;
-        dl->AddLine(ImVec2(wp.x, wp.y + headerH), ImVec2(wp.x + ws.x, wp.y + headerH), lavender, std::max(1.0f, 2.0f * s));
+        dl->AddLine(ImVec2(wp.x, wp.y + headerH), ImVec2(wp.x + ws.x, wp.y + headerH), col::kLine, hair);
 
-        // Page
-        const float descH = std::round(ImGui::GetTextLineHeightWithSpacing() * 3.6f);
-        ImGui::SetCursorScreenPos(ImVec2(wp.x, wp.y + headerH + 2.0f * s));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f * s, 6.0f * s));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * s, 3.0f * s));
+        // Options on the left (57%), the selected option's description on the right.
+        const float listW = std::round(ws.x * 0.57f), bodyY = wp.y + headerH + hair;
+        ImGui::SetCursorScreenPos(ImVec2(wp.x, bodyY));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(std::round(fs * 1.0f), std::round(fs * 0.6f)));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(std::round(fs * 0.6f), std::round(fs * 0.3f)));
         // Another section (L1 / R1): the controller starts again at its first row (menu_phone.cpp).
         if (sPhoneTabChanged && !sPhoneJustOpened) ImGui::NavInitWindow(ImGui::GetCurrentWindow(), true);
-        ImGui::BeginChild("##page", ImVec2(ws.x, ws.y - headerH - descH - 2.0f * s), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
+        ImGui::BeginChild("##page", ImVec2(listW, wp.y + ws.y - bodyY - hair),
+                          ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
         if (sPhoneTabChanged) ImGui::SetScrollY(0.0f);
         ImVec2 drag, start;
@@ -2364,34 +2375,44 @@ void drawPhoneMenu(bool& open) {
         ImGui::PushItemWidth(-1.0f);
         drawPhoneTab(sPhoneTab);
         ImGui::PopItemWidth();
-        ImGui::Dummy(ImVec2(0, 12.0f * s));
+        ImGui::Dummy(ImVec2(0, std::round(fs * 0.8f)));
+        // A thin scroll position mark at the list's right edge while it scrolls (Dusk's thin bar).
+        if (ImGui::GetScrollMaxY() > 1.0f) {
+            const float h = ImGui::GetWindowHeight(), total = h + ImGui::GetScrollMaxY();
+            const float barH = std::max(fs * 1.5f, h * h / total), y0 = (h - barH) * ImGui::GetScrollY() / ImGui::GetScrollMaxY();
+            const ImVec2 p = ImGui::GetWindowPos();
+            ImDrawList* pdl = ImGui::GetWindowDrawList();
+            pdl->PushClipRectFullScreen();
+            pdl->AddRectFilled(ImVec2(p.x + listW - 3.0f * hair, p.y + y0 + 4 * hair), ImVec2(p.x + listW - hair, p.y + y0 + barH - 4 * hair),
+                               IM_COL32(220, 215, 255, 60), hair);
+            pdl->PopClipRect();
+        }
         ImGui::EndChild();
         ImGui::PopStyleVar(2);
+        dl->AddLine(ImVec2(wp.x + listW, bodyY), ImVec2(wp.x + listW, wp.y + ws.y), col::kLine, hair);
 
-        // Description strip
-        const float dy = wp.y + ws.y - descH;
-        dl->AddRectFilled(ImVec2(wp.x, dy), ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(217, 217, 240, 13), ImGui::GetStyle().WindowRounding,
-                          ImDrawFlags_RoundCornersBottom);
-        dl->AddLine(ImVec2(wp.x, dy), ImVec2(wp.x + ws.x, dy), IM_COL32(143, 134, 179, 130), 1.0f);
-        ImGui::SetCursorScreenPos(ImVec2(wp.x + 14.0f * s, dy + 7.0f * s));
-        ImGui::PushTextWrapPos(wp.x + ws.x - 14.0f * s);
-        std::string title = phone::descriptionTitle();
-        for (char& ch : title) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+        const float dx = wp.x + listW + std::round(fs * 1.4f), dr = wp.x + ws.x - std::round(fs * 1.4f);
+        ImGui::SetCursorScreenPos(ImVec2(dx, bodyY + std::round(fs * 1.1f)));
+        ImGui::PushTextWrapPos(dr);
         const char* body = phone::descriptionText();
-        if (title.empty() && !*body) {
-            ImGui::TextColored(ImVec4(242 / 255.0f, 197 / 255.0f, 92 / 255.0f, 1.0f), "SETTINGS");
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-            ImGui::TextWrapped("Tap an option to see what it does. Changes apply and save at once.");
+        const std::string def = phone::descriptionDefault();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(col::kDescription));
+        if (!*phone::descriptionTitle() && !*body) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(col::kHeading));
+            ImGui::TextWrapped("Select an option to see what it does. Changes apply and save at once.");
             ImGui::PopStyleColor();
-        } else {
-            if (!title.empty()) ImGui::TextColored(ImVec4(242 / 255.0f, 197 / 255.0f, 92 / 255.0f, 1.0f), "%s", title.c_str());
-            if (*body) {  // (TextDisabled does not wrap: the text ran off the panel)
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                ImGui::TextWrapped("%s", body);
-                ImGui::PopStyleColor();
-            }
+        } else if (*body) {
+            ImGui::TextWrapped("%s", body);
         }
+        ImGui::PopStyleColor();
         ImGui::PopTextWrapPos();
+        if (!def.empty()) {
+            std::string line = "DEFAULT: " + def;
+            for (char& ch : line) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+            const float size = std::round(fs * 0.8f);
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            phone::trackedText(dl, ImVec2(dx, p.y + std::round(fs * 0.9f)), size, col::kHeading, line.c_str(), size * 0.07f);
+        }
 
         // Controller: L1 / R1 sections, B closes (not while a popup is open), Y hides the panel.
         const bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
@@ -2403,7 +2424,8 @@ void drawPhoneMenu(bool& open) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) sPhoneHidden = !sPhoneHidden;
     }
     ImGui::End();
-    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(4);
     sPhoneTabChanged = false;
     sPhoneJustOpened = false;
 }

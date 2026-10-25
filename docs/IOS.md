@@ -99,22 +99,32 @@ src/recomp/menu_phone.cpp).
 ## Settings menu
 
 The phone has its own layout of the F1 menu (src/recomp/menu.cpp `drawPhoneMenu`, widgets in
-src/recomp/menu_phone.cpp), a moonlit look after Dusk's menus: night-violet panel, lavender edges,
-moon-gold accent, the iPhone's system font (`native::systemFont`, loaded from its file by CoreText).
+src/recomp/menu_phone.cpp), modelled closely on Dusk's menu, in the "Mansion night" colours
+(night-violet glass, thin violet edge, moon-gold accent; `phone::color` and ui_scale.cpp):
 
-- The panel sits on the right, the game keeps running on the left. The eye button in the header
+- One translucent panel over most of the screen; the game keeps running behind it. The eye button
   fades the panel out (tap again to bring it back) to judge a change on the game itself.
-- Section tabs across the top: Phone, Graphics, Rendering, Lighting, Sound, Controls, Gameplay
-  (general + gameplay), Extras (Silly, Unused content, Debug), Game (disc, restore defaults). The
-  strip scrolls sideways; a fade and a chevron show there are more.
-- Every option is a full-width row: On/Off pills, `< value >` arrows for choices, rail sliders.
-  The menu's own wrappers (`recomp::menu::Checkbox/Combo/SliderFloat/SliderInt/SeparatorText/
-  ItemTooltip`) switch to these on the phone, so every tab gets them; the PC tooltips go to the
-  description strip at the bottom for the row last tapped or reached with a controller.
+- Section tabs across the top in tracked capitals (the open one white with a gold underline): Phone,
+  Graphics, Rendering, Lighting, Sound, Controls, Gameplay (general + gameplay), Extras (Silly,
+  Unused content, Debug), Game (disc, restore defaults). They fit across a phone in landscape.
+- Options on the left: plain rows, label in tracked capitals, value as text on the right; the
+  selected row has a thin gold outline; a dot marks a value changed from its default (read from a
+  default-constructed `port::Settings`, or `phone::setNextDefault` for phone first-start defaults).
+  A tap on a choice row steps to the next value; sliders change with a sideways drag on the row
+  (relative to where the finger went down) and show their position as a hairline along the row.
+  The menu's wrappers (`recomp::menu::Checkbox/Combo/SliderFloat/SliderInt/SeparatorText/
+  ItemTooltip`) switch to these on the phone, so every tab gets them.
+- On the right: the selected option's description (the PC tooltip) and its default.
 - Controller: D-pad / stick between rows, left/right change the value, A toggles, L1/R1 change
-  section, B closes, Y hides the panel; the View (Select) button opens and closes the menu. The
-  press that closes the menu does not reach the game (`menu::swallowPadAfterClose`).
-- FPS counter and the cutscene-skip screen use the same look on the phone.
+  section (starting at its first row), B closes, Y hides the panel; the View (Select) button opens
+  and closes the menu. The option list is a NavFlattened child, so ImGui's navigation enters it; the
+  focused row owns left/right. The press that closes the menu does not reach the game
+  (`menu::swallowPadAfterClose`).
+- FPS counter (the number only) and the cutscene-skip screen use the same look.
+- The screen is never tied to the game's frames on a phone: the host always runs decoupled at
+  `frame::hostFps()` (at least 60), so the menu, touch controls and overlays stay smooth at the
+  30 FPS setting and while the game loads; at 30 FPS the recorded game frames are shown as they are
+  (`frame::gameFramesOnly`, no in-betweens), and the FPS counter counts those.
 
 ## Phone tab
 

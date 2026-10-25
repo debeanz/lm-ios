@@ -2,6 +2,7 @@
 #include "recomp/interp.h"
 
 #include "recomp/efb_copy.h"
+#include "recomp/frame.h"
 #include "recomp/gx_bridge.h"
 #include "recomp/hle.h"
 #include "recomp/pacing.h"
@@ -5654,6 +5655,14 @@ bool replay(bool final) {
             }
         }
         q.clear();
+        // Phone at 30 FPS (frame::gameFramesOnly): the host still presents at the screen's rate for
+        // the menu and overlays, but the game shows its own frames as they are: the earlier one of
+        // the pair until the later one's time has come, never a blend.
+        if (a && frame::gameFramesOnly()) {
+            if (alpha < 0.999f) b = a;
+            a = nullptr;
+            alpha = 1.0f;
+        }
     }
     sLastPresent.present++;
     sLastPresent.bSeq = b->seq;

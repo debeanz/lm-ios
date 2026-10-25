@@ -71,7 +71,10 @@ bool interpolationWanted() {
         const char* v = std::getenv("LM_VIEWER_INTERP");
         return v && *v == '1';
     }();
-    return targetFps() > port::kMinFps && sPresents.load() >= kDecoupleAfter && (sViewerInterp || !viewer::isOpen());
+    // Phone: decoupled at 30 too (the game frames shown as they are, gameFramesOnly), so the menu,
+    // the touch controls and the overlays run at the screen's rate, also while the game loads.
+    const bool decouple = targetFps() > port::kMinFps || mobile::enabled();
+    return decouple && sPresents.load() >= kDecoupleAfter && (sViewerInterp || !viewer::isOpen());
 }
 
 }  // namespace
@@ -170,6 +173,9 @@ int targetFps() {
     }
     return std::clamp(fps, port::kMinFps, port::kMaxFps);
 }
+
+int hostFps() { return mobile::enabled() ? std::max(targetFps(), 60) : targetFps(); }
+bool gameFramesOnly() { return mobile::enabled() && targetFps() <= port::kMinFps; }
 
 bool interpolating() { return sHostDecoupled; }
 u32 guestFrames() { return sGuestFrames.load(std::memory_order_relaxed); }

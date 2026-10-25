@@ -208,62 +208,69 @@ void frameCallback(const AuroraWindowSize* size) {
             st.FrameBorderSize = 1.0f;
             st.PopupBorderSize = 1.0f;
             st.TabBarBorderSize = 2.0f;
-            // Moonlit-mansion theme (the approved mockup, after Dusk's menus): deep blue-violet glass,
-            // lavender rules, warm flashlight-yellow accent. Every port window on the phone (menu, FPS,
-            // notices, shader preparation, disc page) uses it.
+            // "Mansion night" (the approved Dusk-style mockup; menu_phone.h has the same colours for
+            // the menu's own rows): night-violet glass, a thin violet edge, moon-gold accent, quiet
+            // controls. Every port window on the phone (menu, FPS, notices, shader preparation, disc
+            // page) uses it.
             const auto rgb = [](int r, int g, int b, float a = 1.0f) { return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, a); };
-            const ImVec4 accent = rgb(242, 197, 92), lavender = rgb(143, 134, 179);
+            const ImVec4 accent = rgb(230, 191, 98), edge = rgb(75, 70, 112);
+            const ImVec4 none = rgb(0, 0, 0, 0.0f), plate = rgb(230, 225, 255, 0.035f);
             ImVec4* c = st.Colors;
-            c[ImGuiCol_Text] = rgb(227, 223, 240);
-            c[ImGuiCol_TextDisabled] = rgb(154, 147, 184);
-            c[ImGuiCol_WindowBg] = rgb(18, 16, 30, 0.92f);
-            c[ImGuiCol_ChildBg] = rgb(0, 0, 0, 0.0f);
-            c[ImGuiCol_PopupBg] = rgb(24, 20, 38, 0.97f);
-            c[ImGuiCol_Border] = lavender;
-            c[ImGuiCol_BorderShadow] = rgb(0, 0, 0, 0.0f);
-            c[ImGuiCol_FrameBg] = rgb(17, 16, 30, 0.65f);
-            c[ImGuiCol_FrameBgHovered] = rgb(242, 197, 92, 0.18f);
-            c[ImGuiCol_FrameBgActive] = rgb(242, 197, 92, 0.30f);
-            c[ImGuiCol_TitleBg] = rgb(28, 24, 48);
-            c[ImGuiCol_TitleBgActive] = rgb(42, 35, 70);
-            c[ImGuiCol_TitleBgCollapsed] = rgb(28, 24, 48, 0.8f);
-            c[ImGuiCol_MenuBarBg] = rgb(217, 217, 240, 0.08f);
-            c[ImGuiCol_ScrollbarBg] = rgb(0, 0, 0, 0.0f);
-            c[ImGuiCol_ScrollbarGrab] = rgb(143, 134, 179, 0.45f);
-            c[ImGuiCol_ScrollbarGrabHovered] = rgb(143, 134, 179, 0.7f);
+            c[ImGuiCol_Text] = rgb(231, 228, 242);
+            c[ImGuiCol_TextDisabled] = rgb(133, 127, 166);
+            c[ImGuiCol_WindowBg] = rgb(19, 18, 31, 0.93f);
+            c[ImGuiCol_ChildBg] = none;
+            c[ImGuiCol_PopupBg] = rgb(24, 23, 39, 0.98f);
+            c[ImGuiCol_Border] = edge;
+            c[ImGuiCol_BorderShadow] = none;
+            c[ImGuiCol_FrameBg] = plate;
+            c[ImGuiCol_FrameBgHovered] = rgb(230, 191, 98, 0.11f);
+            c[ImGuiCol_FrameBgActive] = rgb(230, 191, 98, 0.18f);
+            c[ImGuiCol_TitleBg] = rgb(24, 23, 39);
+            c[ImGuiCol_TitleBgActive] = rgb(30, 28, 48);
+            c[ImGuiCol_TitleBgCollapsed] = rgb(24, 23, 39, 0.8f);
+            c[ImGuiCol_MenuBarBg] = plate;
+            c[ImGuiCol_ScrollbarBg] = none;
+            c[ImGuiCol_ScrollbarGrab] = rgb(220, 215, 255, 0.24f);
+            c[ImGuiCol_ScrollbarGrabHovered] = rgb(220, 215, 255, 0.35f);
             c[ImGuiCol_ScrollbarGrabActive] = accent;
             c[ImGuiCol_CheckMark] = accent;
-            c[ImGuiCol_SliderGrab] = rgb(255, 243, 207);
+            c[ImGuiCol_SliderGrab] = accent;
             c[ImGuiCol_SliderGrabActive] = accent;
-            c[ImGuiCol_Button] = rgb(17, 16, 30, 0.65f);
-            c[ImGuiCol_ButtonHovered] = rgb(242, 197, 92, 0.22f);
-            c[ImGuiCol_ButtonActive] = rgb(242, 197, 92, 0.45f);
-            c[ImGuiCol_Header] = rgb(242, 197, 92, 0.16f);
-            c[ImGuiCol_HeaderHovered] = rgb(242, 197, 92, 0.24f);
-            c[ImGuiCol_HeaderActive] = rgb(242, 197, 92, 0.36f);
-            c[ImGuiCol_Separator] = rgb(143, 134, 179, 0.5f);
+            c[ImGuiCol_Button] = plate;
+            c[ImGuiCol_ButtonHovered] = rgb(230, 191, 98, 0.11f);  // (also the controller's focus)
+            c[ImGuiCol_ButtonActive] = rgb(230, 191, 98, 0.18f);
+            c[ImGuiCol_Header] = rgb(230, 191, 98, 0.11f);
+            c[ImGuiCol_HeaderHovered] = rgb(230, 191, 98, 0.15f);
+            c[ImGuiCol_HeaderActive] = rgb(230, 191, 98, 0.22f);
+            c[ImGuiCol_Separator] = rgb(220, 215, 255, 0.08f);
             c[ImGuiCol_SeparatorHovered] = accent;
             c[ImGuiCol_SeparatorActive] = accent;
-            c[ImGuiCol_ResizeGrip] = rgb(0, 0, 0, 0.0f);
-            c[ImGuiCol_ResizeGripHovered] = rgb(0, 0, 0, 0.0f);
-            c[ImGuiCol_ResizeGripActive] = rgb(0, 0, 0, 0.0f);
-            c[ImGuiCol_Tab] = rgb(0, 0, 0, 0.0f);
-            c[ImGuiCol_TabHovered] = rgb(242, 197, 92, 0.16f);
-            c[ImGuiCol_TabSelected] = rgb(242, 197, 92, 0.14f);
+            c[ImGuiCol_ResizeGrip] = none;
+            c[ImGuiCol_ResizeGripHovered] = none;
+            c[ImGuiCol_ResizeGripActive] = none;
+            c[ImGuiCol_Tab] = none;
+            c[ImGuiCol_TabHovered] = rgb(230, 191, 98, 0.11f);
+            c[ImGuiCol_TabSelected] = none;
             c[ImGuiCol_TabSelectedOverline] = accent;
-            c[ImGuiCol_TabDimmed] = rgb(0, 0, 0, 0.0f);
-            c[ImGuiCol_TabDimmedSelected] = rgb(242, 197, 92, 0.10f);
-            c[ImGuiCol_TableHeaderBg] = rgb(217, 217, 240, 0.06f);
-            c[ImGuiCol_TableBorderStrong] = rgb(143, 134, 179, 0.5f);
-            c[ImGuiCol_TableBorderLight] = rgb(143, 134, 179, 0.25f);
-            c[ImGuiCol_TableRowBg] = rgb(0, 0, 0, 0.0f);
-            c[ImGuiCol_TableRowBgAlt] = rgb(217, 217, 240, 0.03f);
-            c[ImGuiCol_TextSelectedBg] = rgb(242, 197, 92, 0.35f);
-            c[ImGuiCol_NavCursor] = accent;
-            c[ImGuiCol_ModalWindowDimBg] = rgb(8, 6, 14, 0.6f);
-            st.TabRounding = 0.0f;  // flat tabs with the accent underline, as in the mockup
-            st.WindowRounding = 14.0f * s;
-            st.FrameRounding = st.GrabRounding = 7.0f * s;
+            c[ImGuiCol_TabDimmed] = none;
+            c[ImGuiCol_TabDimmedSelected] = none;
+            c[ImGuiCol_TableHeaderBg] = plate;
+            c[ImGuiCol_TableBorderStrong] = rgb(220, 215, 255, 0.10f);
+            c[ImGuiCol_TableBorderLight] = rgb(220, 215, 255, 0.06f);
+            c[ImGuiCol_TableRowBg] = none;
+            c[ImGuiCol_TableRowBgAlt] = plate;
+            c[ImGuiCol_TextSelectedBg] = rgb(230, 191, 98, 0.30f);
+            // The menu's rows draw their own gold outline when selected; ImGui's nav frame would be a
+            // second one around it (focused buttons show their hovered colour instead).
+            c[ImGuiCol_NavCursor] = none;
+            c[ImGuiCol_ModalWindowDimBg] = rgb(8, 7, 14, 0.6f);
+            st.TabRounding = 0.0f;  // flat tabs with the accent underline
+            st.WindowRounding = 10.0f * s;
+            st.ChildRounding = st.PopupRounding = 8.0f * s;
+            st.FrameRounding = st.GrabRounding = 6.0f * s;
+            st.WindowBorderSize = st.PopupBorderSize = std::max(1.0f, std::round(s));
+            st.FrameBorderSize = 0.0f;
         }
         ImGui::GetStyle() = st;
         sStyleScale = s;

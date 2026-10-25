@@ -21,6 +21,11 @@ u32 guestFrames();             // frames the game has finished (VISetNextFrameBu
 // Presentation target (F1 > Visuals > Frame rate): the slider, or the refresh rate of the
 // display the window is on. 30 = the game's own rate without interpolation.
 int targetFps();
+// Phone (src/mobile): the screen (menu, touch controls, overlays) is never tied to the game's frames.
+// The host always runs decoupled, at hostFps(): at least 60 even when the game is shown at its own
+// 30 (gameFramesOnly(): the recorded frames are shown as they are, without in-betweens).
+int hostFps();
+bool gameFramesOnly();
 float displayRefreshHz();     // 0 if unknown; host (main) thread
 void stop();
 bool gamePaused();

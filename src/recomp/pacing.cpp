@@ -808,9 +808,12 @@ void beforeFrame() {
         // display; counting display-link refreshes (Vblank mode) miscounted there and a 60 fps cap
         // ran at 72-75 fps (build 11 log), while this schedule held 60.0 with no drops. Never
         // faster than the panel (120 fps on a 60 Hz iPhone: 60).
+        // At 30 FPS the screen still runs at 60 (frame::hostFps: the menu and overlays are not tied
+        // to the game; the game's own frames are shown as they are).
         const int maxHz = mobile::native::maxRefreshRate();
+        const double hostPeriod = 1.0 / double(frame::hostFps());
         mode = Mode::Grid;
-        base = maxHz > 0 ? std::max(minPeriod, 1.0 / double(maxHz)) : minPeriod;
+        base = maxHz > 0 ? std::max(hostPeriod, 1.0 / double(maxHz)) : hostPeriod;
         period = base;
     } else if (!vsync || hz <= 0) {
         mode = Mode::Grid;
