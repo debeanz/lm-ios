@@ -181,7 +181,7 @@ new file mode 100644
 index 0000000..8a3456a
 --- /dev/null
 +++ b/lib/webgpu/metalfx.mm
-@@ -0,0 +1,400 @@
+@@ -0,0 +1,457 @@
 +// MetalFX spatial upscaling of the present source (include/aurora/metalfx.h). Compiled with ARC.
 +//
 +// Two IOSurfaces are shared between Dawn and our own Metal command queue:
@@ -318,6 +318,38 @@ index 0000000..8a3456a
 +  set_status("failed: " + why);
 +}
 +
++// A rejected call on this path is a WebGPU validation error, which Aurora treats as fatal (the
++// uncaptured-error callback ends the program): on an iPhone, turning MetalFX on crashed the game,
++// and with the setting saved every start crashed again. The scaler's setup and its first frames
++// therefore run inside a validation error scope; an error there turns MetalFX off for this run
++// (status "failed: ...") and the frame falls back to the normal scaling.
++constexpr int kCheckedFrames = 30;
++int g_checkedLeft = 0;   // frames after a (re)build still checked
++bool g_scopeOpen = false;
++
++void push_scope() {
++  g_device.PushErrorScope(wgpu::ErrorFilter::Validation);
++  g_scopeOpen = true;
++}
++
++// Ends the open scope; false (MetalFX failed for this run) if Dawn reported an error in it.
++bool pop_scope(const char* what) {
++  if (!g_scopeOpen) return true;
++  g_scopeOpen = false;
++  bool ok = true;
++  std::string message;
++  const auto future = g_device.PopErrorScope(
++      wgpu::CallbackMode::WaitAnyOnly, [&](wgpu::PopErrorScopeStatus status, wgpu::ErrorType type, wgpu::StringView msg) {
++        if (status == wgpu::PopErrorScopeStatus::Success && type != wgpu::ErrorType::NoError) {
++          ok = false;
++          message = std::string(msg.data, msg.length);
++        }
++      });
++  g_instance.WaitAny(future, UINT64_MAX);
++  if (!ok && !g_broken) fail(std::string(what) + ": " + message);
++  return ok;
++}
++
 +IOSurfaceRef make_surface(uint32_t w, uint32_t h) {
 +  const size_t bytesPerRow = IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, size_t(w) * 4);
 +  NSDictionary* props = @{
@@ -378,9 +410,21 @@ index 0000000..8a3456a
 +  return true;
 +}
 +
-+// Scaler and shared textures for these sizes (recreated when they change).
++bool build(uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH);
++
++// Scaler and shared textures for these sizes (recreated when they change), built inside an
++// error scope; the frames after it are checked too (g_checkedLeft).
 +bool ensure(uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH) {
 +  if (g_scaler != nil && g_in.width == inW && g_in.height == inH && g_out.width == outW && g_out.height == outH) return true;
++  push_scope();
++  const bool built = build(inW, inH, outW, outH);
++  const bool clean = pop_scope("setting up the scaler");
++  if (!built || !clean) return false;
++  g_checkedLeft = kCheckedFrames;
++  return true;
++}
++
++bool build(uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH) {
 +  release_all();
 +  std::string why;
 +  if (@available(iOS 16.0, macOS 13.0, *)) {
@@ -460,6 +504,7 @@ index 0000000..8a3456a
 +void set_interop_supported(bool supported) noexcept { g_interop.store(supported); }
 +
 +const TextureWithSampler* upscale(const Viewport& viewport, bool frameSubmitted) {
++  pop_scope("the last frame");  // (a frame whose present did not reach after_present_submit)
 +  if (!g_enabled.load(std::memory_order_relaxed)) {
 +    if (g_scaler != nil) release_all();
 +    if (!g_broken) set_status("off");
@@ -486,6 +531,12 @@ index 0000000..8a3456a
 +    return nullptr;
 +  }
 +  if (!ensure(src.size.width, src.size.height, outW, outH)) return nullptr;
++  // The first frames: everything up to the present's submit (after_present_submit) is checked.
++  if (g_checkedLeft > 0) push_scope();
++  const auto failed = [] {
++    pop_scope("upscaling a frame");
++    return nullptr;
++  };
 +
 +  // 1. present source -> input (after MetalFX's previous read of it)
 +  wgpu::SharedTextureMemoryBeginAccessDescriptor inBegin;
@@ -498,7 +549,7 @@ index 0000000..8a3456a
 +  }
 +  if (g_in.memory.BeginAccess(g_in.texture, &inBegin) != wgpu::Status::Success) {
 +    fail("BeginAccess on the input failed");
-+    return nullptr;
++    return failed();
 +  }
 +  {
 +    const wgpu::CommandEncoderDescriptor encDesc{.label = "MetalFX input copy"};
@@ -516,7 +567,7 @@ index 0000000..8a3456a
 +    wgpu::SharedTextureMemoryEndAccessState inEnd;
 +    if (g_in.memory.EndAccess(g_in.texture, &inEnd) != wgpu::Status::Success || !export_waits(inEnd, waits)) {
 +      fail("EndAccess / fence export on the input failed");
-+      return nullptr;
++      return failed();
 +    }
 +  }
 +
@@ -545,18 +596,24 @@ index 0000000..8a3456a
 +  outBegin.signaledValues = &g_eventValue;
 +  if (g_out.memory.BeginAccess(g_out.texture, &outBegin) != wgpu::Status::Success) {
 +    fail("BeginAccess on the output failed");
-+    return nullptr;
++    return failed();
 +  }
 +  g_outInAccess = true;
 +  return &g_outSampled;
 +}
 +
 +void after_present_submit() {
-+  if (!g_outInAccess) return;
++  if (!g_outInAccess) {
++    pop_scope("upscaling a frame");
++    return;
++  }
 +  g_outInAccess = false;
 +  wgpu::SharedTextureMemoryEndAccessState state;
 +  if (g_out.memory.EndAccess(g_out.texture, &state) != wgpu::Status::Success || !export_waits(state, g_outWaits))
 +    fail("EndAccess / fence export on the output failed");
++  if (g_scopeOpen) {
++    if (pop_scope("presenting the upscaled frame") && --g_checkedLeft == 0) Log.info("MetalFX: first frames checked, no errors");
++  }
 +}
 +
 +void shutdown() {

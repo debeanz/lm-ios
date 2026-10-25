@@ -88,6 +88,7 @@ constexpr const char* kUpscalingLabels[] = {"Off", "MetalFX"};
 
 // MetalFX upscaling chosen and possible on this device (Aurora 0240).
 bool metalfxOn() { return ms().upscaling == 1 && aurora_metalfx_available(); }
+fs::path metalfxTrialMarker() { return native::documentsDir() / "Logs" / "metalfx_trial"; }
 
 // Render height of the Resolution row, never above the panel; 0 = the panel's own. With MetalFX,
 // "Native" renders at 2/3 of the panel instead (at the panel's own size there is nothing to upscale).
@@ -274,9 +275,20 @@ void beforeAurora() {
     // Metal presents with the display's refresh: VSync is always on on a phone.
     s.video.vsync = true;
     s.video.fullscreen = true;
-    // The pacer's variable-refresh detection would read ProMotion's rate changes as a VRR display
-    // (a schedule a little below the refresh rate); the display link's refreshes are a fixed grid.
+    // (The phone's frame pacing is its own even schedule, pacing.cpp; the PC's VRR row is unused.)
     s.video.vrr = 2;
+    // MetalFX that took the app down: the marker of a MetalFX trial is still there (applyDisplay
+    // writes it when MetalFX turns on and removes it after 20 s of play with it). Off again, so a
+    // crash with it does not repeat at every start (build 11: settings had to be reset).
+    std::error_code ec;
+    if (fs::exists(metalfxTrialMarker(), ec)) {
+        fs::remove(metalfxTrialMarker(), ec);
+        if (s.mobile.upscaling != 0) {
+            s.mobile.upscaling = 0;
+            port::saveSettings();
+            sessionlog::line("settings", "MetalFX upscaling turned off: the last run ended while it was being tried");
+        }
+    }
 }
 
 void init() {
@@ -409,10 +421,30 @@ void onRefreshTick() {
 void applyDisplay() {
     const int h = renderHeight();
     VISetFrameBufferScale(h > 0 ? float(h) / 480.0f : 0.0f);
-    aurora_set_metalfx(metalfxOn());  // cheap every frame (an atomic store)
-    // Refresh signal for the frame pacer: the panel's full rate above 30 FPS (60 FPS = every second
-    // refresh of a 120 Hz panel, each frame shown for exactly two), 60 Hz for the game's own 30.
-    const int want = port::settings().video.targetFps > 30 ? native::maxRefreshRate() : 60;
+    const bool fx = metalfxOn();
+    aurora_set_metalfx(fx);  // cheap every frame (an atomic store)
+    {
+        // MetalFX trial marker (beforeAurora): written when it turns on, removed after 20 s with it.
+        static bool sFxWas = false;
+        static Clock::time_point sFxSince{};
+        std::error_code ec;
+        if (fx && !sFxWas) {
+            std::ofstream(metalfxTrialMarker()) << "MetalFX turned on; removed after 20 s of play\n";
+            sFxSince = Clock::now();
+        } else if (!fx && sFxWas) {
+            fs::remove(metalfxTrialMarker(), ec);
+        } else if (fx && sFxSince != Clock::time_point{} && Clock::now() - sFxSince > std::chrono::seconds(20)) {
+            fs::remove(metalfxTrialMarker(), ec);
+            sFxSince = {};
+            sessionlog::line("display", "MetalFX ran 20 s without a problem: %s", aurora_metalfx_status());
+        }
+        sFxWas = fx;
+    }
+    // The display link at the frame rate (60 FPS: the panel at 60 Hz, each frame shown once; 120 on
+    // ProMotion). Frames are paced by pacing.cpp's own schedule; the link sets the panel's rate.
+    const int fps = port::settings().video.targetFps;
+    const int maxHz = native::maxRefreshRate();
+    const int want = std::min(maxHz > 0 ? maxHz : 60, std::max(60, fps));
     if (want != sSignalHz) {
         sSignalHz = want;
         const int got = native::startRefreshSignal(want, &onRefreshTick);

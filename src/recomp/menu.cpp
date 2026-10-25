@@ -1941,8 +1941,8 @@ void fpsOverlay() {
         const float big = ImGui::GetFontSize(), small = std::round(big * 0.72f);
         char num[16];
         std::snprintf(num, sizeof(num), "%.0f", fps);
-        const char* st = recomp::pacing::status();
-        const bool note = st && *st;
+        const char* st = "";  // phone: the number alone (no pacing details: user request)
+        const bool note = false;
         const ImVec2 ns = font->CalcTextSizeA(big, FLT_MAX, 0.0f, num);
         const ImVec2 ls = font->CalcTextSizeA(small, FLT_MAX, 0.0f, "FPS");
         const ImVec2 ss = note ? font->CalcTextSizeA(small, FLT_MAX, 0.0f, st) : ImVec2(0, 0);
@@ -2352,7 +2352,9 @@ void drawPhoneMenu(bool& open) {
         ImGui::SetCursorScreenPos(ImVec2(wp.x, wp.y + headerH + 2.0f * s));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f * s, 6.0f * s));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * s, 3.0f * s));
-        ImGui::BeginChild("##page", ImVec2(ws.x, ws.y - headerH - descH - 2.0f * s), ImGuiChildFlags_AlwaysUseWindowPadding,
+        // Another section (L1 / R1): the controller starts again at its first row (menu_phone.cpp).
+        if (sPhoneTabChanged && !sPhoneJustOpened) ImGui::NavInitWindow(ImGui::GetCurrentWindow(), true);
+        ImGui::BeginChild("##page", ImVec2(ws.x, ws.y - headerH - descH - 2.0f * s), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
         if (sPhoneTabChanged) ImGui::SetScrollY(0.0f);
         ImVec2 drag, start;
@@ -2378,10 +2380,16 @@ void drawPhoneMenu(bool& open) {
         const char* body = phone::descriptionText();
         if (title.empty() && !*body) {
             ImGui::TextColored(ImVec4(242 / 255.0f, 197 / 255.0f, 92 / 255.0f, 1.0f), "SETTINGS");
-            ImGui::TextDisabled("Tap an option to see what it does. Changes apply and save at once.");
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("Tap an option to see what it does. Changes apply and save at once.");
+            ImGui::PopStyleColor();
         } else {
             if (!title.empty()) ImGui::TextColored(ImVec4(242 / 255.0f, 197 / 255.0f, 92 / 255.0f, 1.0f), "%s", title.c_str());
-            if (*body) ImGui::TextDisabled("%s", body);
+            if (*body) {  // (TextDisabled does not wrap: the text ran off the panel)
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::TextWrapped("%s", body);
+                ImGui::PopStyleColor();
+            }
         }
         ImGui::PopTextWrapPos();
 

@@ -37,6 +37,7 @@ bool sNextSet = false;
 int sSliderHeldFrame = -10;    // ImGui frame a phone slider last had the finger (dragged sideways)
 int sSliderActiveFrame = -10;  // ImGui frame a finger was last down on a phone slider
 ImGuiID sClaimedId = 0;        // the slider the finger is dragging
+bool sDefaultDone = false;     // the page's first row was made the controller's default focus
 
 // The text before "##" (ImGui's ID suffix).
 std::string visible(const char* label) {
@@ -46,6 +47,13 @@ std::string visible(const char* label) {
 
 // Phone rows are full width: one placed with SameLine() after another starts its own line instead
 // (there is no room beside a full-width row; e.g. Debug > Font test's "Latin last line").
+// The first row of a page is where the controller starts (menu opened, section changed).
+void defaultFocus() {
+    if (sDefaultDone) return;
+    sDefaultDone = true;
+    ImGui::SetItemDefaultFocus();
+}
+
 void ownLine() {
     if (ImGui::GetCurrentWindow()->DC.IsSameLine) ImGui::NewLine();
 }
@@ -76,6 +84,7 @@ bool row(const char* label, float h, ImRect& rect, bool& selectedOut) {
     const float w = ImGui::GetContentRegionAvail().x;
     ImGui::PushID(label);
     const bool pressed = ImGui::InvisibleButton("##row", ImVec2(w, h), ImGuiButtonFlags_PressedOnClickRelease);
+    defaultFocus();
     ImGui::PopID();
     rect = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     const std::string title = visible(label);
@@ -100,6 +109,12 @@ bool row(const char* label, float h, ImRect& rect, bool& selectedOut) {
 // Controller: left/right on the focused item; returns -1, 0, +1 (with key repeat).
 int sideStep() {
     if (!ImGui::IsItemFocused()) return 0;
+    // Left / right belong to the focused row (they change its value): ImGui's navigation reads them
+    // only when nobody owns them, so it does not also move the focus sideways (to the header icons).
+    const ImGuiID id = ImGui::GetItemID();
+    for (const ImGuiKey k : {ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickLeft,
+                             ImGuiKey_GamepadLStickRight, ImGuiKey_LeftArrow, ImGuiKey_RightArrow})
+        ImGui::SetKeyOwner(k, id);
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, true) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft, true) ||
         ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true))
         return -1;
@@ -208,6 +223,7 @@ bool sliderRow(const char* label, float& t, const char* valueText, float stepNor
     ImGui::PushID(label);
     const ImVec2 start = ImGui::GetCursorScreenPos();
     const bool hit = ImGui::InvisibleButton("##slider", ImVec2(w, h * 1.45f));
+    defaultFocus();
     ImGui::PopID();
     const ImRect rect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     selectIfTouched(title);
@@ -338,6 +354,7 @@ void itemTooltip(const char* fmt, va_list args) {
 }
 
 void beginFrame() {
+    sDefaultDone = false;
     if (sNextSet) {
         sDescTitle = sNextTitle;
         sDescText = sNextText;

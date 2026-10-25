@@ -1,5 +1,7 @@
 #include "recomp/pacing.h"
 
+#include "mobile/mobile.h"
+#include "mobile/native.h"
 #include "port/settings.h"
 #include "recomp/cpu_qos.h"
 #include "recomp/frame.h"
@@ -793,12 +795,24 @@ void beforeFrame() {
         return;
     }
     const bool vrr = vrrActive();
-    const double need = sGov.limit;  // the period the PC sustains (governor), 0 = the target holds
+    // Phone: no governor. The player picks 30 / 60 / 120 and gets exactly that schedule; a frame
+    // that runs late is late, the rate is never lowered on its own (user request).
+    const bool phone = mobile::enabled();
+    const double need = phone ? 0.0 : sGov.limit;  // the period the PC sustains (governor), 0 = the target holds
     const double minPeriod = 1.0 / double(fps);
     Mode mode;
     double period, base;
     const bool vsync = vsyncOn();
-    if (!vsync || hz <= 0) {
+    if (phone) {
+        // Phone: an even schedule at the target. ProMotion panels follow the presents like a VRR
+        // display; counting display-link refreshes (Vblank mode) miscounted there and a 60 fps cap
+        // ran at 72-75 fps (build 11 log), while this schedule held 60.0 with no drops. Never
+        // faster than the panel (120 fps on a 60 Hz iPhone: 60).
+        const int maxHz = mobile::native::maxRefreshRate();
+        mode = Mode::Grid;
+        base = maxHz > 0 ? std::max(minPeriod, 1.0 / double(maxHz)) : minPeriod;
+        period = base;
+    } else if (!vsync || hz <= 0) {
         mode = Mode::Grid;
         base = minPeriod;
         period = std::max(minPeriod, need);
@@ -872,8 +886,12 @@ void beforeFrame() {
     sStarts.push_back(Clock::now());
     sCur.started = sStarts.back();
     while (sStarts.size() > 1 && sStarts.back() - sStarts.front() > std::chrono::seconds(1)) sStarts.pop_front();
-    governFrame(sCur.started, sPeriod, base, sameMode);
+    if (!phone) governFrame(sCur.started, sPeriod, base, sameMode);
     const float shown = presentedFps();
+    if (phone) {
+        std::snprintf(sStatus, sizeof(sStatus), "%.0f fps", shown);
+        return;
+    }
     char why[96] = "";
     if (need > minPeriod * 1.02) {
         // What limits it: the busiest stage of recent frames (GPU, or the CPU side).
