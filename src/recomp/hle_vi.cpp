@@ -1,6 +1,7 @@
 // HLE: VI. A host timer raises the retrace interrupt at 59.94 Hz (the PAL game: 50 Hz,
 // or 59.94 Hz "PAL60" when chosen in the F1 menu); the game paces itself on it. VISetNextFrameBuffer marks a finished frame, which is
 // handed to the host loop (see frame.h) before the game continues.
+#include "mobile/mobile.h"
 #include "port/install.h"
 #include "port/settings.h"
 #include "recomp/cpu_qos.h"
@@ -62,6 +63,10 @@ void startTimer() {
             if (const double speed = skip::retraceSpeed(); speed > 1.0) {
                 // Fast-forward (skip.h): retraces as fast as the game takes them, up to `speed` x.
                 const auto fast = std::chrono::duration_cast<clock::duration>(period / speed);
+                // Phone: sleep instead of spinning. A spinning timer holds one of the phone's two
+                // or so fast cores for the whole skip, which the game thread needs.
+                static const bool sSleep = mobile::enabled();
+                if (sSleep) std::this_thread::sleep_until(next);
                 while (clock::now() < next && sTimerRun) std::this_thread::yield();
                 next = std::max(next + fast, clock::now());
                 if (!frame::gamePaused() && !sRetracePending.exchange(true)) sched::postIrq(&retrace);
