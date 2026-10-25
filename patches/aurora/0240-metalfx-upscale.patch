@@ -201,7 +201,7 @@ index 0000000..8a3456a
 +#include <webgpu/webgpu_cpp.h>
 +
 +#import <Foundation/Foundation.h>
-+#import <IOSurface/IOSurface.h>
++#import <IOSurface/IOSurfaceRef.h>  // (iOS: IOSurface.h is the macOS umbrella header)
 +#import <Metal/Metal.h>
 +#import <MetalFX/MetalFX.h>
 +
