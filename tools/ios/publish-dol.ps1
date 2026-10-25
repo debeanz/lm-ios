@@ -11,7 +11,9 @@ param(
     [Parameter(Mandatory = $true)][string]$Dol,
     [Parameter(Mandatory = $true)][string]$Repo
 )
-$ErrorActionPreference = 'Stop'
+# Not 'Stop': Windows PowerShell 5.1 turns any stderr line of gh (e.g. "release not found", an
+# expected answer) into a terminating error. Failures are checked with $LASTEXITCODE (Check).
+$ErrorActionPreference = 'Continue'
 
 if (-not (Test-Path $Dol)) { throw "main.dol not found: $Dol (tools/ios/extract_dol.py copies it out of an ISO)" }
 $vis = gh repo view $Repo --json visibility -q .visibility
@@ -19,13 +21,23 @@ if ($vis -ne 'PRIVATE') { throw "$Repo is $vis. Game files and builds go only in
 
 $sha = (Get-FileHash -Algorithm SHA1 $Dol).Hash.ToLower()
 Write-Host "main.dol SHA-1 $sha ($((Get-Item $Dol).Length) bytes)"
+function Check([string]$what) { if ($LASTEXITCODE -ne 0) { throw "$what failed" } }
 
-$exists = $true
-try { gh release view game-data --repo $Repo --json tagName | Out-Null } catch { $exists = $false }
-if ($LASTEXITCODE -ne 0) { $exists = $false }
-if (-not $exists) {
+# A release needs a commit to tag: give a new, empty data repository a README first.
+$branches = gh api "repos/$Repo/branches" --jq 'length'
+Check "reading the repository's branches"
+if ($branches -eq '0') {
+    $readme = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
+        "# Private iOS build data`n`nYour own main.dol (release game-data) and the iOS builds (releases ios-N). Keep this repository private.`n"))
+    gh api -X PUT "repos/$Repo/contents/README.md" -f message="Private iOS build data" -f content=$readme | Out-Null
+    Check "creating the first commit"
+}
+
+gh release view game-data --repo $Repo --json tagName 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
     gh release create game-data --repo $Repo --title "Game data (private)" `
         --notes "Your own main.dol for the iOS build. Never make this repository public."
+    Check "creating the game-data release"
 }
 $notes = gh release view game-data --repo $Repo --json body -q .body
 if ($notes -match "sha1: $sha") {
@@ -33,5 +45,7 @@ if ($notes -match "sha1: $sha") {
     exit 0
 }
 gh release upload game-data $Dol --repo $Repo --clobber
+Check "uploading main.dol"
 gh release edit game-data --repo $Repo --notes "Your own main.dol for the iOS build. Never make this repository public.`nsha1: $sha"
+Check "updating the release notes"
 Write-Host "Uploaded main.dol to $Repo (release game-data)."
