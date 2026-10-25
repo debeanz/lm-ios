@@ -82,16 +82,41 @@ the app. "Check again" looks for a file copied in with the Files app.
 - Top: analog L and R in the corners, purple Z under R, START and the menu button in the middle.
   The menu button opens the F1 menu on its iPhone tab (and closes it).
 
-Behaviour, the same as in every phone port: smoked-glass controls drawn in code (no image files),
+Behaviour, the same as in every phone port: GameCube-plastic controls drawn in code (no image files:
+moulded shading, embossed round-jointed lettering, X/Y beans as one shape, L/R without a bar),
 press animation and glow, light haptic tap per press, constant opacity, hidden while a controller is
 connected (and shown again when it disconnects). A finger can slide from one face button to another.
 A tap is always seen by the game, even if the finger lifts before the game reads the pad. The D-pad
 sends one press per new direction and, after 0.4 s held, repeats every 0.15 s, so menus step once
 per tap. The game's rumble plays on the Taptic Engine while the touch controller is used (Vibration).
 
-Fingers that miss the controls go to the menus as a mouse: tap to click, drag up/down to scroll.
+Fingers that miss the controls go to the menus as a mouse: tap to click; a drag of more than 9 pt
+scrolls the list under it by the finger's own distance and glides on after a flick (it used to be
+mouse-wheel steps, one per frame, and rows grabbed the finger so only the scrollbar scrolled). A
+slider takes the finger only for a sideways drag or a tap (src/mobile/touch_pad.cpp `scrollFor`,
+src/recomp/menu_phone.cpp).
 
-## iPhone settings (F1 > iPhone)
+## Settings menu
+
+The phone has its own layout of the F1 menu (src/recomp/menu.cpp `drawPhoneMenu`, widgets in
+src/recomp/menu_phone.cpp), a moonlit look after Dusk's menus: night-violet panel, lavender edges,
+moon-gold accent, the iPhone's system font (`native::systemFont`, loaded from its file by CoreText).
+
+- The panel sits on the right, the game keeps running on the left. The eye button in the header
+  fades the panel out (tap again to bring it back) to judge a change on the game itself.
+- Section tabs across the top: Phone, Graphics, Rendering, Lighting, Sound, Controls, Gameplay
+  (general + gameplay), Extras (Silly, Unused content, Debug), Game (disc, restore defaults). The
+  strip scrolls sideways; a fade and a chevron show there are more.
+- Every option is a full-width row: On/Off pills, `< value >` arrows for choices, rail sliders.
+  The menu's own wrappers (`recomp::menu::Checkbox/Combo/SliderFloat/SliderInt/SeparatorText/
+  ItemTooltip`) switch to these on the phone, so every tab gets them; the PC tooltips go to the
+  description strip at the bottom for the row last tapped or reached with a controller.
+- Controller: D-pad / stick between rows, left/right change the value, A toggles, L1/R1 change
+  section, B closes, Y hides the panel; the View (Select) button opens and closes the menu. The
+  press that closes the menu does not reach the game (`menu::swallowPadAfterClose`).
+- FPS counter and the cutscene-skip screen use the same look on the phone.
+
+## Phone tab
 
 The same rows and values as every phone port; changes apply and are saved at once:
 
@@ -100,10 +125,10 @@ The same rows and values as every phone port; changes apply and are saved at onc
 | Resolution | Native (panel size) / 2106x1084 / 1920x1080 / 1600x900 / 1280x720 (render height, never above the panel) |
 | Aspect Ratio | iPhone Default / 1.943:1 / 16:9 / 4:3 |
 | Screen Scaling | Fit (bars around the image, Aurora patch 0239) / Stretch |
-| Upscaling | Off / MetalFX (Apple's spatial upscaler, Aurora patch 0240): the game renders at the Resolution row's height and MetalFX fills the screen; with Resolution "Native" it renders at 2/3 of the panel (at full size there is nothing to upscale). Greyed out where MetalFX or the IOSurface/MTLSharedEvent interop is missing; any failure falls back to the normal scaling (logged as `MetalFX ...`). Idle with the CRT filter on |
-| Frame Rate | 30 / 60 / 120 FPS (ProMotion); above 30 the frames in between are interpolated, the game logic stays at 30 |
+| Upscaling | Off / MetalFX (Apple's spatial upscaler, Aurora patch 0240): the game renders at the Resolution row's height and MetalFX fills the screen; with Resolution "Native" it renders at 2/3 of the panel (at full size there is nothing to upscale). Greyed out where MetalFX or the IOSurface/MTLSharedEvent interop is missing; any failure falls back to the normal scaling (logged as `MetalFX ...`). Paused with the CRT filter on (the row says so); the display copy filter is skipped while MetalFX is on, since its pass kept a post-process chain running and MetalFX never ran |
+| Frame Rate | 30 / 60 / 120 FPS (ProMotion); above 30 the frames in between are interpolated, the game logic stays at 30. Pacing follows a CADisplayLink on its own thread at the panel's rate (`native::startRefreshSignal` -> `pacing::displayRefreshed`), so 60 on a 120 Hz panel is every second refresh (Metal's present rate alone let it run at 100-120) |
 | Show FPS | Off / On |
-| UI Size | Small / Default / Large (menus at about 1.5x the PC size by default) |
+| Menu text | Small / Default / Large |
 | Touch Controls | Off / On |
 | Touch Opacity | 20-100 % |
 | Touch Size | 70-150 % |
@@ -111,8 +136,10 @@ The same rows and values as every phone port; changes apply and are saved at onc
 | Vibration | Off / On |
 
 First start: 60 fps, and a render height by memory as a quality tier (8 GB: 1080, 6 GB: 900, less:
-720). Desktop-only rows (window, VSync, menu size, PC frame-rate slider) are hidden on the phone;
-everything else in the F1 menu works as on the PC. There is no Quit button (iOS apps do not quit).
+720). Desktop-only rows (window, VSync, menu size, PC frame-rate slider, keep-GPU-warm, pause on
+focus loss, Tab fast-forward, data folder, updater) are hidden on the phone, and so are the rows for
+the other release (the app is built from one disc). Anti-aliasing applies after the app is swiped
+away and opened again. There is no Quit button (iOS apps do not quit).
 
 ## Logs
 
@@ -155,6 +182,8 @@ arm64 executable). Fixes the first runs needed: Objective-C++ enabled on Apple, 
 experimental switch for `std::jthread`, a const path iterator in the updater, and library lookups
 restricted to the iPhone SDK (the runner's Homebrew macOS libpng/zstd were picked up otherwise).
 
-Not yet run on a device: start-up, Metal rendering with Aurora's local patches, touch input and
-performance are unverified; the session log is the first place to look. Not yet: the European
-Hidden Mansion overlay on iOS, both releases in one IPA.
+Runs on an iPhone (builds 5 and 7, user session logs): boots, renders, touch and sound work.
+Build 8 adds the phone menu, display-link pacing and the MetalFX fix (unverified on a device).
+Open: cutscene skipping runs at only about 2x (about 11 ms per skipped frame), thread QoS is not
+applied to threads with a fixed priority, memory around 4.3 GB after the shader preparation.
+Not yet: the European Hidden Mansion overlay on iOS, both releases in one IPA.
