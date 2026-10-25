@@ -14,6 +14,7 @@
 
 #include <aurora/aurora.h>
 #include <aurora/dvd.h>
+#include <aurora/event.h>
 #include <dolphin/pad.h>
 #include <dolphin/vi.h>
 #include <imgui.h>

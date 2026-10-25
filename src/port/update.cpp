@@ -1443,7 +1443,7 @@ void forwardOldLauncher(const fs::path& dir) {
 bool sameOrInside(const fs::path& p, const fs::path& dir) {
     const fs::path a = p.lexically_normal(), b = dir.lexically_normal();
     auto it = a.begin();
-    for (auto& part : b) {
+    for (const auto& part : b) {  // (libc++'s path iterator yields temporaries)
         if (part.empty()) continue;  // trailing separator of dir
         if (it == a.end()) return false;
 #ifdef _WIN32
