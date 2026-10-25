@@ -86,7 +86,18 @@ jobs:
 
       - name: Configure (iOS arm64)
         run: |
+          # Libraries are looked up only inside the iPhone SDK (not Homebrew's macOS copies on the
+          # runner); Aurora builds its own iOS copy of anything the SDK lacks (libpng, FreeType,
+          # zstd, ...). Programs (git, cargo) still come from the runner.
+          sdk=$(xcrun --sdk iphoneos --show-sdk-path)
+          echo "iPhone SDK: $sdk"
           cmake -S . -B build/ios -G Ninja \
+            -DCMAKE_FIND_ROOT_PATH="$sdk" \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY \
+            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
+            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
+            -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON \
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_OSX_SYSROOT=iphoneos \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
