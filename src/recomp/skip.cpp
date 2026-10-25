@@ -18,6 +18,7 @@
 // suspend the skip (the player answers them); it resumes afterwards.
 #include "recomp/skip.h"
 
+#include "mobile/mobile.h"
 #include "port/install.h"
 #include "port/settings.h"
 #include "recomp/gx_bridge.h"
@@ -159,6 +160,13 @@ bool sMaskStart = false;     // the game must not see START (cutscene can be ski
 bool sNewBatch = true;
 clock::time_point sBatchStart;
 constexpr auto kBatchBudget = std::chrono::milliseconds(12);
+// Phone (src/mobile): game frames cost more CPU there, so a 12 ms batch held about one frame and
+// most of the time went to the shown frame in between (a skip ran at 2x). The screen is covered
+// while skipping, so fewer shown frames cost nothing visible.
+constexpr auto kPhoneBatchBudget = std::chrono::milliseconds(40);
+// Per skip: frames shown between batches, and guest time spent on the skipped ones (the log line).
+u32 sShownInSkip = 0;
+double sSkippedSeconds = 0;
 
 // Shared with the host thread.
 std::atomic<bool> sDevFastForward{false};  // Tab held
@@ -277,10 +285,15 @@ void update() {
     if (before == Mode::Off && sMode != Mode::Off) {
         sSkipStartFrame = sFrame;
         sSkipStartTime = clock::now();
+        sShownInSkip = 0;
+        sSkippedSeconds = 0;
         log("[skip] skipping %s", sOpeningSkip ? "the opening" : "an event");
     } else if (before != Mode::Off && sMode == Mode::Off) {
-        log("[skip] done: %u frames in %.2f s", sFrame - sSkipStartFrame,
-            std::chrono::duration<float>(clock::now() - sSkipStartTime).count());
+        const u32 frames = sFrame - sSkipStartFrame;
+        const u32 hidden = frames > sShownInSkip ? frames - sShownInSkip : 0;
+        log("[skip] done: %u frames in %.2f s (%u shown between batches, %.2f ms per skipped frame)", frames,
+            std::chrono::duration<float>(clock::now() - sSkipStartTime).count(), sShownInSkip,
+            hidden ? sSkippedSeconds * 1000.0 / hidden : 0.0);
     }
     sStartLatched = false;
     sMaskStart = isCutscene && sMode != Mode::Suspended;
@@ -300,16 +313,23 @@ void setTestFastForward(bool on) { sTestFast = on; }
 bool onGuestFrame(Ctx&) {
     sFrame++;
     update();
+    static clock::time_point sLastFrame = clock::now();
+    const auto now = clock::now();
+    const auto frameTime = now - sLastFrame;
+    sLastFrame = now;
     if (sFast.load()) {
-        const auto now = clock::now();
+        if (gx::g_discardDraws) sSkippedSeconds += std::chrono::duration<double>(frameTime).count();
         if (sNewBatch) {
             sNewBatch = false;
             sBatchStart = now;
         }
-        if (now - sBatchStart < kBatchBudget) {
+        static const auto sBudget = mobile::enabled() ? std::chrono::duration_cast<clock::duration>(kPhoneBatchBudget)
+                                                      : std::chrono::duration_cast<clock::duration>(kBatchBudget);
+        if (now - sBatchStart < sBudget) {
             gx::g_discardDraws = true;  // the next frame is not shown
             return true;
         }
+        sShownInSkip++;
     }
     // Hand this frame to the host; the next one is drawn normally.
     gx::g_discardDraws = false;

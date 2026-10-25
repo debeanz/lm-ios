@@ -699,7 +699,15 @@ void gameTab() {
         recomp::menu::Button("ID check self-test");
     }
     auto& inst = port::install();
-    if (inst.staticBuild) {
+    const bool phone = mobile::enabled();
+    if (phone) {
+        // iPhone / iPad: one release per app, the disc image in the app's folder; no portable mode
+        // or updater (src/mobile, docs/IOS.md).
+        ImGui::Text("Playing: Luigi's Mansion, %s version", inst.running == port::GameVersion::PAL ? "European" : "USA");
+        ImGui::TextWrapped("Your disc image, saves, settings and logs are in the Files app: On My iPhone > "
+                           "Luigi's Mansion. To use another disc image of the same release, replace the file "
+                           "there and restart the app.");
+    } else if (inst.staticBuild) {
         ImGui::Text("Developer build: %s, recompiled at build time.", port::versionName(inst.running));
         ImGui::TextDisabled("LuigisMansionRecomp manages discs and versions (docs/SETUP.md).");
     } else {
@@ -757,6 +765,7 @@ void gameTab() {
     }
     if (port::palBaseFeature() == port::Avail::Yes)
         ImGui::TextDisabled("Used for a new save; an existing save keeps its language (in-game Options).");
+    if (phone) return;  // portable data folder and the PC updater do not apply on a phone
     dataSection();
     updatesSection();
 }
@@ -765,8 +774,10 @@ void gameTab() {
 // settings().rendering.<flag>, sDirty |= ..., and a tooltip saying what changes visually
 // and roughly what it costs.
 void renderingTab() {
+    const bool phone = mobile::enabled();
     ImGui::TextDisabled("Hardware-accurate rendering. Everything is on by default for the best quality;");
-    ImGui::TextDisabled("turn features off only if your PC needs the speed.");
+    ImGui::TextDisabled(phone ? "turn features off for more speed, less heat and longer battery life."
+                              : "turn features off only if your PC needs the speed.");
     auto& r = port::settings().rendering;
     ImGui::SeparatorText("Color and depth");
     sDirty |= recomp::menu::Checkbox("Integer-accurate TEV", &r.integerTev);
@@ -867,7 +878,7 @@ void renderingTab() {
         "a draw can pick up data the game already rewrote for a later draw: Luigi's mouth or\n"
         "the Poltergust hose flicker now and then. Off: saves the copies (about 0.2-0.3 ms CPU per frame).\n"
         "Above 30 fps (interpolation) vertex data is always snapshotted.");
-    {
+    if (!phone) {  // a desktop GPU clock trick (unavailable on iOS; it would only cost battery there)
         const bool avail = recomp::pacing::keepWarmAvailable();
         bool shown = avail && r.gpuKeepWarm;
         ImGui::BeginDisabled(!avail);
@@ -1652,22 +1663,29 @@ void gameplaySection() {
 
 void generalEnhancementsTab() {
     auto& e = port::settings().enhancements;
-    ImGui::SeparatorText("Interface");
-    sDirty |= recomp::menu::Checkbox("Show FPS", &e.showFps);
-    ImGui::SetItemTooltip("Frames per second shown in the top-left corner.");
-    if (recomp::menu::Checkbox("Pause when window loses focus", &e.pauseOnFocusLoss)) {
-        sDirty = true;
-        applyWindowSettings();
+    // Phone: Show FPS is an iPhone-tab row, iOS always pauses an app in the background, and there
+    // is no Tab key.
+    const bool phone = mobile::enabled();
+    if (!phone) {
+        ImGui::SeparatorText("Interface");
+        sDirty |= recomp::menu::Checkbox("Show FPS", &e.showFps);
+        ImGui::SetItemTooltip("Frames per second shown in the top-left corner.");
+        if (recomp::menu::Checkbox("Pause when window loses focus", &e.pauseOnFocusLoss)) {
+            sDirty = true;
+            applyWindowSettings();
+        }
+        ImGui::SetItemTooltip("The game pauses (and goes quiet) while another window is in front.");
     }
-    ImGui::SetItemTooltip("The game pauses (and goes quiet) while another window is in front.");
     ImGui::SeparatorText("Cutscenes");
     sDirty |= recomp::menu::Checkbox("Skippable cutscenes", &e.skipCutscenes);
     ImGui::SetItemTooltip("Press START during a cutscene to skip it. The game plays the rest of the\n"
                           "cutscene at high speed behind a black screen, so everything it sets up\n"
                           "(items, keys, doors, story progress) is the same as after watching it.\n"
                           "Choices and the save screen still wait for you.");
-    sDirty |= recomp::menu::Checkbox("Hold Tab to fast-forward", &e.fastForwardKey);
-    ImGui::SetItemTooltip("While Tab is held the game runs as fast as it can, muted.");
+    if (!phone) {
+        sDirty |= recomp::menu::Checkbox("Hold Tab to fast-forward", &e.fastForwardKey);
+        ImGui::SetItemTooltip("While Tab is held the game runs as fast as it can, muted.");
+    }
     ImGui::SeparatorText("Fixes");
     sDirty |= recomp::menu::Checkbox("Fix rooms vanishing near doorways", &e.portalClipFix);
     ImGui::SetItemTooltip("The game hides a whole room behind a doorway when the camera gets so close\n"

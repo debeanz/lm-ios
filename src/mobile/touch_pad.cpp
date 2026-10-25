@@ -65,66 +65,215 @@ void press(u16 bit, bool down) {
 }
 
 // ---- Colours ---------------------------------------------------------------------------------
+// Moulded plastic in the GameCube controller's palette: teal-green A, red B, light-grey kidney X/Y,
+// indigo Z, yellow C-Stick, mid-grey stick, D-pad, triggers and START (original drawings, no
+// artwork from the console).
 
 struct Rgb {
     float r, g, b;
 };
-constexpr Rgb kBody{0.075f, 0.08f, 0.10f};  // smoked glass
-constexpr Rgb kNeutral{0.92f, 0.94f, 1.0f};
-constexpr Rgb kGreenA{0.16f, 0.74f, 0.52f};
-constexpr Rgb kRedB{0.90f, 0.22f, 0.24f};
-constexpr Rgb kGreyXY{0.78f, 0.80f, 0.86f};
-constexpr Rgb kPurpleZ{0.50f, 0.36f, 0.92f};
-constexpr Rgb kYellowC{1.0f, 0.80f, 0.16f};
-constexpr Rgb kGrey{0.70f, 0.72f, 0.78f};
+constexpr Rgb kWhite{1, 1, 1};
+constexpr Rgb kBlack{0, 0, 0};
+constexpr Rgb kGreenA{0.10f, 0.62f, 0.47f};
+constexpr Rgb kRedB{0.84f, 0.16f, 0.19f};
+constexpr Rgb kGreyXY{0.80f, 0.81f, 0.85f};
+constexpr Rgb kIndigoZ{0.37f, 0.29f, 0.78f};
+constexpr Rgb kYellowC{0.98f, 0.77f, 0.10f};
+constexpr Rgb kGreyBody{0.55f, 0.56f, 0.60f};
+constexpr Rgb kGreyLight{0.70f, 0.71f, 0.75f};
+constexpr Rgb kSocket{0.13f, 0.13f, 0.16f};
 
 Rgb mix(Rgb a, Rgb b, float t) { return {a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t}; }
 ImU32 col(Rgb c, float a) {
-    return ImGui::GetColorU32(ImVec4(c.r, c.g, c.b, std::clamp(a, 0.0f, 1.0f)));
+    return ImGui::GetColorU32(ImVec4(std::clamp(c.r, 0.0f, 1.0f), std::clamp(c.g, 0.0f, 1.0f), std::clamp(c.b, 0.0f, 1.0f),
+                                     std::clamp(a, 0.0f, 1.0f)));
+}
+Rgb lighter(Rgb c, float t) { return mix(c, kWhite, t); }
+Rgb darker(Rgb c, float t) { return mix(c, kBlack, t); }
+
+// Light from the top left: a surface facing the light (outward normal n, screen y down) is
+// brighter, one facing away darker. `relief` sets how strongly the shape is modelled.
+Rgb shade(Rgb base, ImVec2 n, float relief = 1.0f) {
+    const float d = (-n.x * 0.42f - n.y * 0.91f) * relief;  // -1..1
+    return d >= 0 ? lighter(base, 0.42f * d) : darker(base, 0.38f * -d);
 }
 
-// ---- Drawing helpers -------------------------------------------------------------------------
+ImVec2 add(ImVec2 a, ImVec2 b) { return ImVec2(a.x + b.x, a.y + b.y); }
+ImVec2 sub(ImVec2 a, ImVec2 b) { return ImVec2(a.x - b.x, a.y - b.y); }
+ImVec2 mul(ImVec2 a, float k) { return ImVec2(a.x * k, a.y * k); }
+ImVec2 norm(ImVec2 v) {
+    const float l = std::hypot(v.x, v.y);
+    return l > 1e-5f ? ImVec2(v.x / l, v.y / l) : ImVec2(0, -1);
+}
 
-// Filled circle with a vertical gradient (top colour to bottom colour): the glass body's light.
-void gradientDisc(ImDrawList* dl, ImVec2 c, float r, ImU32 top, ImU32 bottom, int seg = 48) {
-    const ImVec2 uv = dl->_Data->TexUvWhitePixel;
-    dl->PrimReserve(seg * 3, seg + 1);
-    const unsigned base = dl->_VtxCurrentIdx;
-    const ImVec4 t = ImGui::ColorConvertU32ToFloat4(top), b = ImGui::ColorConvertU32ToFloat4(bottom);
-    auto lerp = [&](float k) {
-        return ImGui::ColorConvertFloat4ToU32(
-            ImVec4(t.x + (b.x - t.x) * k, t.y + (b.y - t.y) * k, t.z + (b.z - t.z) * k, t.w + (b.w - t.w) * k));
-    };
-    dl->PrimWriteVtx(c, uv, lerp(0.5f));
+// ---- Shapes ----------------------------------------------------------------------------------
+
+using Pts = std::vector<ImVec2>;
+
+Pts circlePts(ImVec2 c, float r, int seg = 48) {
+    Pts p;
     for (int i = 0; i < seg; i++) {
         const float a = 2.0f * kPi * float(i) / float(seg);
-        dl->PrimWriteVtx(ImVec2(c.x + std::cos(a) * r, c.y + std::sin(a) * r), uv, lerp((std::sin(a) + 1.0f) * 0.5f));
+        p.push_back(ImVec2(c.x + std::cos(a) * r, c.y + std::sin(a) * r));
     }
-    for (int i = 0; i < seg; i++) {
-        dl->PrimWriteIdx(ImDrawIdx(base));
-        dl->PrimWriteIdx(ImDrawIdx(base + 1 + i));
-        dl->PrimWriteIdx(ImDrawIdx(base + 1 + (i + 1) % seg));
+    return p;
+}
+
+// Rounded rectangle (convex), corners of radius rad.
+Pts roundRectPts(ImVec2 c, float w, float h, float rad, int perCorner = 8) {
+    rad = std::min(rad, std::min(w, h) * 0.5f);
+    const float x0 = c.x - w * 0.5f + rad, x1 = c.x + w * 0.5f - rad, y0 = c.y - h * 0.5f + rad, y1 = c.y + h * 0.5f - rad;
+    const ImVec2 centres[4] = {{x1, y1}, {x0, y1}, {x0, y0}, {x1, y0}};
+    Pts p;
+    for (int k = 0; k < 4; k++)
+        for (int i = 0; i <= perCorner; i++) {
+            const float a = (float(k) + float(i) / float(perCorner)) * kPi * 0.5f;
+            p.push_back(ImVec2(centres[k].x + std::cos(a) * rad, centres[k].y + std::sin(a) * rad));
+        }
+    return p;
+}
+
+Pts offset(const Pts& in, ImVec2 d) {
+    Pts p = in;
+    for (auto& v : p) v = add(v, d);
+    return p;
+}
+
+ImVec2 centroid(const Pts& p) {
+    ImVec2 s(0, 0);
+    for (const auto& v : p) s = add(s, v);
+    return mul(s, 1.0f / float(std::max<size_t>(p.size(), 1)));
+}
+
+// Convex shape filled as moulded plastic: each rim vertex lit by its outward direction, the middle
+// a little brighter (the dome), so the shape reads as a raised, rounded part.
+void plastic(ImDrawList* dl, const Pts& p, Rgb base, float alpha, float relief = 1.0f, float dome = 0.10f) {
+    if (p.size() < 3) return;
+    const ImVec2 uv = dl->_Data->TexUvWhitePixel;
+    const ImVec2 c = centroid(p);
+    const int n = int(p.size());
+    dl->PrimReserve(n * 3, n + 1);
+    const unsigned base0 = dl->_VtxCurrentIdx;
+    dl->PrimWriteVtx(add(c, ImVec2(0, 0)), uv, col(lighter(base, dome), alpha));
+    for (const auto& v : p) dl->PrimWriteVtx(v, uv, col(shade(base, norm(sub(v, c)), relief), alpha));
+    for (int i = 0; i < n; i++) {
+        dl->PrimWriteIdx(ImDrawIdx(base0));
+        dl->PrimWriteIdx(ImDrawIdx(base0 + 1 + i));
+        dl->PrimWriteIdx(ImDrawIdx(base0 + 1 + (i + 1) % n));
     }
 }
 
-// Glossy highlight on the upper part of a disc: bright at the top, gone by the middle.
-void shine(ImDrawList* dl, ImVec2 c, float r, float alpha) {
-    if (alpha <= 0.0f) return;
-    gradientDisc(dl, ImVec2(c.x, c.y - r * 0.18f), r * 0.78f, col({1, 1, 1}, alpha), col({1, 1, 1}, 0.0f));
+void flat(ImDrawList* dl, const Pts& p, ImU32 color) {
+    if (p.size() >= 3) dl->AddConvexPolyFilled(p.data(), int(p.size()), color);
 }
 
-// Soft drop shadow: a few widening, fading discs.
-void shadow(ImDrawList* dl, ImVec2 c, float r, float alpha) {
-    for (int i = 0; i < 4; i++)
-        dl->AddCircleFilled(ImVec2(c.x, c.y + r * 0.06f), r * (1.02f + 0.06f * float(i)), col({0, 0, 0}, alpha * 0.22f), 40);
+void outline(ImDrawList* dl, const Pts& p, ImU32 color, float w) {
+    if (p.size() >= 2) dl->AddPolyline(p.data(), int(p.size()), color, ImDrawFlags_Closed, w);
 }
 
-void label(ImDrawList* dl, ImVec2 c, float px, const char* text, ImU32 color) {
-    ImFont* font = ImGui::GetFont();
-    const ImVec2 sz = font->CalcTextSizeA(px, FLT_MAX, 0.0f, text);
-    const ImVec2 p(c.x - sz.x * 0.5f, c.y - sz.y * 0.5f);
-    dl->AddText(font, px, ImVec2(p.x, p.y + px * 0.05f), col({0, 0, 0}, 0.55f * (ImGui::ColorConvertU32ToFloat4(color).w)), text);
-    dl->AddText(font, px, p, color, text);
+// Soft drop shadow of a convex shape: a few widening, fading copies below it.
+void dropShadow(ImDrawList* dl, const Pts& p, float depth, float alpha) {
+    const ImVec2 c = centroid(p);
+    for (int i = 3; i >= 0; i--) {
+        Pts s = p;
+        const float grow = 1.0f + 0.035f * float(i);
+        for (auto& v : s) v = add(add(c, mul(sub(v, c), grow)), ImVec2(0, depth * (0.6f + 0.25f * float(i))));
+        flat(dl, s, col(kBlack, alpha * (i == 0 ? 0.35f : 0.12f)));
+    }
+}
+
+// ---- Lettering -------------------------------------------------------------------------------
+// Bold rounded stroke letters drawn as thick lines (sharp at any size; the menu font is a small
+// bitmap font). Glyphs in a unit box (x 0..1 across the letter, y 0..1 down), arcs as point runs.
+
+struct Stroke {
+    Pts pts;  // unit coordinates
+};
+
+void arcInto(Pts& out, float cx, float cy, float rx, float ry, float fromDeg, float toDeg, int seg = 12) {
+    for (int i = 0; i <= seg; i++) {
+        const float a = (fromDeg + (toDeg - fromDeg) * float(i) / float(seg)) * kPi / 180.0f;
+        out.push_back(ImVec2(cx + std::cos(a) * rx, cy + std::sin(a) * ry));
+    }
+}
+
+std::vector<Stroke> glyph(char ch) {
+    std::vector<Stroke> g;
+    auto line = [&](std::initializer_list<ImVec2> l) { g.push_back({Pts(l)}); };
+    switch (ch) {
+    case 'A': line({{0.0f, 1.0f}, {0.5f, 0.0f}, {1.0f, 1.0f}}); line({{0.22f, 0.66f}, {0.78f, 0.66f}}); break;
+    case 'B': {
+        Stroke s;
+        s.pts = {{0.0f, 0.5f}, {0.0f, 0.0f}, {0.5f, 0.0f}};
+        arcInto(s.pts, 0.5f, 0.25f, 0.42f, 0.25f, -90.0f, 90.0f);
+        s.pts.push_back({0.0f, 0.5f});
+        s.pts.push_back({0.55f, 0.5f});
+        arcInto(s.pts, 0.55f, 0.75f, 0.45f, 0.25f, -90.0f, 90.0f);
+        s.pts.push_back({0.0f, 1.0f});
+        s.pts.push_back({0.0f, 0.5f});
+        g.push_back(s);
+        break;
+    }
+    case 'C': {
+        Stroke s;
+        arcInto(s.pts, 0.55f, 0.5f, 0.5f, 0.5f, -45.0f, -315.0f, 20);
+        g.push_back(s);
+        break;
+    }
+    case 'L': line({{0.0f, 0.0f}, {0.0f, 1.0f}, {0.9f, 1.0f}}); break;
+    case 'R': {
+        Stroke s;
+        s.pts = {{0.0f, 1.0f}, {0.0f, 0.0f}, {0.5f, 0.0f}};
+        arcInto(s.pts, 0.5f, 0.27f, 0.45f, 0.27f, -90.0f, 90.0f);
+        s.pts.push_back({0.0f, 0.54f});
+        g.push_back(s);
+        line({{0.42f, 0.54f}, {0.95f, 1.0f}});
+        break;
+    }
+    case 'S': {
+        Stroke s;
+        arcInto(s.pts, 0.5f, 0.26f, 0.46f, 0.26f, -20.0f, -270.0f, 14);
+        arcInto(s.pts, 0.5f, 0.76f, 0.5f, 0.24f, -90.0f, 160.0f, 16);
+        g.push_back(s);
+        break;
+    }
+    case 'T': line({{0.0f, 0.0f}, {1.0f, 0.0f}}); line({{0.5f, 0.0f}, {0.5f, 1.0f}}); break;
+    case 'X': line({{0.0f, 0.0f}, {1.0f, 1.0f}}); line({{1.0f, 0.0f}, {0.0f, 1.0f}}); break;
+    case 'Y': line({{0.0f, 0.0f}, {0.5f, 0.5f}, {1.0f, 0.0f}}); line({{0.5f, 0.5f}, {0.5f, 1.0f}}); break;
+    case 'Z': line({{0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f}}); break;
+    default: break;
+    }
+    return g;
+}
+
+float glyphWidth(char ch) { return ch == 'L' ? 0.55f : ch == 'T' ? 0.62f : ch == 'S' ? 0.58f : 0.66f; }
+
+// Text centred on c, cap height h, stroke width h * weight; raised: a darker copy below the letters
+// and a lighter one above (moulded into the plastic).
+void strokeText(ImDrawList* dl, ImVec2 c, float h, const char* text, Rgb face, float alpha, float weight = 0.17f,
+                bool raised = true) {
+    const float t = std::max(1.5f, h * weight);
+    const float gap = h * 0.24f;
+    float total = 0;
+    for (const char* p = text; *p; p++) total += glyphWidth(*p) * h + (p[1] ? gap : 0.0f);
+    const auto draw = [&](ImVec2 shift, ImU32 color, float width) {
+        float x = c.x - total * 0.5f;
+        for (const char* p = text; *p; p++) {
+            const float w = glyphWidth(*p) * h;
+            for (const auto& s : glyph(*p)) {
+                Pts pts;
+                for (const auto& u : s.pts) pts.push_back(ImVec2(x + u.x * w + shift.x, c.y - h * 0.5f + u.y * h + shift.y));
+                dl->AddPolyline(pts.data(), int(pts.size()), color, 0, width);
+                for (const auto& v : pts) dl->AddCircleFilled(v, width * 0.5f, color, 10);  // round joins and caps
+            }
+            x += w + gap;
+        }
+    };
+    if (raised) {
+        draw(ImVec2(0, t * 0.45f), col(darker(face, 0.65f), alpha * 0.85f), t);
+        draw(ImVec2(0, -t * 0.25f), col(lighter(face, 0.55f), alpha * 0.6f), t);
+    }
+    draw(ImVec2(0, 0), col(face, alpha), t);
 }
 
 // ---- Controls --------------------------------------------------------------------------------
@@ -158,6 +307,7 @@ struct Control {
     bool owned = false;
     bool pressed = false;
     float anim = 0;  // 0..1 press animation
+    float ripple = -1;  // seconds since the last press (the ring that spreads out), -1 = none
     ImVec2 knob{};   // stick knob offset (screen units)
     // D-pad
     bool dir[4] = {};  // up, right, down, left
@@ -209,8 +359,8 @@ void build() {
     sCtl.clear();
     auto add = [](Control c) { sCtl.push_back(c); };
     // Left hand
-    add({.kind = Kind::Stick, .name = "Control Stick", .anchor = Anchor::BL, .off = {300, 275}, .size = 140, .accent = kGrey});
-    add({.kind = Kind::DPad, .name = "D-pad", .anchor = Anchor::BL, .off = {250, 645}, .size = 200, .accent = kNeutral});
+    add({.kind = Kind::Stick, .name = "Control Stick", .anchor = Anchor::BL, .off = {300, 275}, .size = 140, .accent = kGreyBody});
+    add({.kind = Kind::DPad, .name = "D-pad", .anchor = Anchor::BL, .off = {250, 645}, .size = 200, .accent = kGreyBody});
     // Right hand: A with B, X and Y around it, C-Stick lower left
     const ImVec2 a{-300, 310};
     add({.kind = Kind::Round, .name = "A", .bit = PAD_BUTTON_A, .anchor = Anchor::BR, .off = a, .size = 175, .accent = kGreenA,
@@ -225,15 +375,15 @@ void build() {
          .tinted = true, .text = "C", .cStick = true});
     // Shoulders
     add({.kind = Kind::Trigger, .name = "L", .bit = PAD_TRIGGER_L, .anchor = Anchor::TL, .off = {200, -95}, .size = 250, .size2 = 104,
-         .accent = kGrey, .text = "L"});
+         .accent = kGreyLight, .text = "L"});
     add({.kind = Kind::Trigger, .name = "R", .bit = PAD_TRIGGER_R, .anchor = Anchor::TR, .off = {-200, -95}, .size = 250, .size2 = 104,
-         .accent = kGrey, .text = "R", .rightTrigger = true});
+         .accent = kGreyLight, .text = "R", .rightTrigger = true});
     add({.kind = Kind::Pill, .name = "Z", .bit = PAD_TRIGGER_Z, .anchor = Anchor::TR, .off = {-200, -222}, .size = 196, .size2 = 76,
-         .accent = kPurpleZ, .tinted = true, .text = "Z"});
+         .accent = kIndigoZ, .tinted = true, .text = "Z"});
     // Middle
     add({.kind = Kind::Round, .name = "START", .bit = PAD_BUTTON_START, .anchor = Anchor::TC, .off = {70, -72}, .size = 84,
-         .accent = kNeutral, .text = "START"});
-    add({.kind = Kind::Round, .name = "Menu", .anchor = Anchor::TC, .off = {-70, -72}, .size = 76, .accent = kNeutral, .menu = true});
+         .accent = kGreyLight, .text = "START"});
+    add({.kind = Kind::Round, .name = "Menu", .anchor = Anchor::TC, .off = {-70, -72}, .size = 76, .accent = kGreyLight, .menu = true});
 
     const float k = sSafe.w / kRefHeight * float(ms().touchSize) / 100.0f;
     for (auto& c : sCtl) {
@@ -302,8 +452,8 @@ bool hit(const Control& c, ImVec2 p, bool forStart) {
 
 // ---- Input -----------------------------------------------------------------------------------
 
-void haptic() {
-    if (ms().haptics) native::haptic(0);
+void haptic(int style = 0) {  // 0 light, 1 medium (the face buttons: a firmer click)
+    if (ms().haptics) native::haptic(style);
 }
 
 void setStick(Control& c, ImVec2 p) {
@@ -367,6 +517,7 @@ void controlDown(int idx, SDL_FingerID f, ImVec2 p) {
     c.owned = true;
     c.finger = f;
     c.pressed = true;
+    if (c.kind != Kind::Stick && c.kind != Kind::DPad) c.ripple = 0.0f;
     sOwner[f] = idx;
     switch (c.kind) {
     case Kind::Stick:
@@ -385,7 +536,7 @@ void controlDown(int idx, SDL_FingerID f, ImVec2 p) {
             break;  // acts on release
         }
         press(c.bit, true);
-        haptic();
+        haptic(c.face ? 1 : 0);
         break;
     }
     sessionlog::line("touch", "%s down", c.name);
@@ -540,179 +691,261 @@ bool end(SDL_FingerID f) {
 }
 
 // ---- Painting --------------------------------------------------------------------------------
+// Each control: a soft drop shadow, the part's darker side wall (its height), the lit plastic top
+// lifted above it, a crisp edge, a glint, raised lettering. A press sinks the top onto its wall,
+// darkens it a little, flashes it and sends a ripple out from the part.
+
+constexpr float kRippleSeconds = 0.38f;
+
+// The label colour for a part: light lettering on colourful plastic, dark on grey.
+Rgb letterColour(Rgb base, bool colourful) { return colourful ? lighter(base, 0.80f) : darker(base, 0.62f); }
+
+void ripple(ImDrawList* dl, ImVec2 c, float r, float t, Rgb accent, float a) {
+    if (t < 0.0f || t > kRippleSeconds) return;
+    const float k = t / kRippleSeconds;
+    const float ease = 1.0f - (1.0f - k) * (1.0f - k);
+    dl->AddCircle(c, r * (1.0f + 0.65f * ease), col(lighter(accent, 0.35f), 0.55f * (1.0f - k) * std::max(a, 0.5f)), 48,
+                  std::max(1.5f, r * 0.10f * (1.0f - k)));
+}
+
+void glint(ImDrawList* dl, ImVec2 c, ImVec2 radius, float alpha) {
+    if (alpha <= 0.01f) return;
+    dl->AddEllipseFilled(c, radius, col(kWhite, alpha * 0.45f), -0.45f, 24);
+    dl->AddEllipseFilled(c, mul(radius, 0.55f), col(kWhite, alpha * 0.35f), -0.45f, 20);
+}
 
 void paintRound(ImDrawList* dl, const Control& c, float a) {
-    const float p = c.anim;
-    const float r = c.r * (1.0f - 0.08f * p);
-    const Rgb body = c.tinted ? mix(kBody, c.accent, 0.42f) : kBody;
-    shadow(dl, c.c, r, 0.55f * a * (1.0f - 0.4f * p));
-    if (p > 0.01f) dl->AddCircle(c.c, r * 1.12f, col(c.accent, 0.8f * p * std::max(a, 0.6f)), 48, r * 0.16f);
-    gradientDisc(dl, c.c, r, col(mix(body, {1, 1, 1}, 0.10f + 0.12f * p), (0.82f + 0.12f * p) * a + 0.05f),
-                 col(body, (0.80f + 0.12f * p) * a + 0.05f));
-    if (p > 0.01f) dl->AddCircleFilled(c.c, r, col(c.accent, 0.32f * p), 48);
-    shine(dl, c.c, r, 0.16f * a * (1.0f - 0.5f * p));
-    const Rgb rim = mix({1, 1, 1}, c.accent, c.tinted ? 0.45f : 0.1f);
-    dl->AddCircle(c.c, r, col(rim, (0.55f + 0.45f * p) * a + 0.12f), 48, std::max(1.5f, r * 0.045f));
-    const float la = std::clamp(a * 1.25f + 0.2f, 0.0f, 1.0f);
+    const float p = c.anim, r = c.r;
+    const bool colourful = c.tinted;
+    const Rgb base = darker(c.accent, 0.10f * p);
+    const float height = r * 0.10f;
+    const ImVec2 top = add(c.c, ImVec2(0, -height * (1.0f - p)));
+    const Pts footprint = circlePts(c.c, r);
+    dropShadow(dl, footprint, r * 0.10f, 0.55f * a);
+    plastic(dl, footprint, darker(c.accent, 0.45f), a, 0.6f, 0.0f);  // side wall
+    const Pts body = circlePts(top, r * (1.0f - 0.03f * p));
+    plastic(dl, body, base, a, 1.0f, 0.12f);
+    outline(dl, body, col(darker(c.accent, 0.55f), 0.9f * a), std::max(1.5f, r * 0.045f));
+    if (p > 0.01f) dl->AddCircleFilled(top, r, col(kWhite, 0.16f * p * a), 48);
+    glint(dl, add(top, ImVec2(-0.34f * r, -0.40f * r)), ImVec2(0.30f * r, 0.15f * r), a * (1.0f - 0.6f * p));
+    ripple(dl, c.c, r, c.ripple, c.accent, a);
     if (c.menu) {
-        // three bars
-        const float bw = r * 0.46f, bh = std::max(2.0f, r * 0.075f);
-        for (int i = -1; i <= 1; i++)
-            dl->AddRectFilled(ImVec2(c.c.x - bw, c.c.y + i * r * 0.26f - bh), ImVec2(c.c.x + bw, c.c.y + i * r * 0.26f + bh),
-                              col(kNeutral, la), bh);
+        const float bw = r * 0.44f, bh = std::max(2.0f, r * 0.085f);
+        for (int i = -1; i <= 1; i++) {
+            const ImVec2 m = add(top, ImVec2(0, float(i) * r * 0.27f));
+            dl->AddRectFilled(ImVec2(m.x - bw, m.y - bh + bh * 0.6f), ImVec2(m.x + bw, m.y + bh + bh * 0.6f),
+                              col(lighter(base, 0.55f), 0.5f * a), bh);  // raised: light edge below the groove
+            dl->AddRectFilled(ImVec2(m.x - bw, m.y - bh), ImVec2(m.x + bw, m.y + bh), col(darker(base, 0.6f), a), bh);
+        }
     } else if (c.text) {
-        const bool small = std::strlen(c.text) > 1;
-        label(dl, c.c, r * (small ? 0.42f : 1.0f), c.text, col(c.tinted ? Rgb{1, 1, 1} : kNeutral, la));
+        const bool word = std::strlen(c.text) > 1;
+        strokeText(dl, top, r * (word ? 0.30f : 0.84f), c.text, letterColour(base, colourful), std::clamp(a * 1.2f + 0.15f, 0.0f, 1.0f),
+                   word ? 0.19f : 0.17f);
     }
+}
+
+// X / Y: a curved bean around A. Filled as a strip between the outer and inner edge plus two
+// rounded ends, each vertex lit by its outward direction.
+void kidneyFill(ImDrawList* dl, ImVec2 c, float R, float th, float a0, float a1, Rgb base, float alpha, float relief) {
+    const ImVec2 uv = dl->_Data->TexUvWhitePixel;
+    const int seg = 28;
+    const float ro = R + th * 0.5f, ri = R - th * 0.5f;
+    dl->PrimReserve(seg * 6, (seg + 1) * 2);
+    unsigned v0 = dl->_VtxCurrentIdx;
+    for (int i = 0; i <= seg; i++) {
+        const float ang = a0 + (a1 - a0) * float(i) / float(seg);
+        const ImVec2 d(std::cos(ang), std::sin(ang));
+        dl->PrimWriteVtx(add(c, mul(d, ro)), uv, col(shade(base, d, relief), alpha));
+        dl->PrimWriteVtx(add(c, mul(d, ri)), uv, col(shade(base, mul(d, -1.0f), relief * 0.7f), alpha));
+    }
+    for (int i = 0; i < seg; i++) {
+        const unsigned o = v0 + unsigned(i) * 2;
+        dl->PrimWriteIdx(ImDrawIdx(o));
+        dl->PrimWriteIdx(ImDrawIdx(o + 1));
+        dl->PrimWriteIdx(ImDrawIdx(o + 2));
+        dl->PrimWriteIdx(ImDrawIdx(o + 1));
+        dl->PrimWriteIdx(ImDrawIdx(o + 3));
+        dl->PrimWriteIdx(ImDrawIdx(o + 2));
+    }
+    for (const float ang : {a0, a1}) {  // rounded ends
+        const ImVec2 e = add(c, mul(ImVec2(std::cos(ang), std::sin(ang)), R));
+        plastic(dl, circlePts(e, th * 0.5f, 20), base, alpha, relief, 0.0f);
+    }
+}
+
+Pts kidneyOutline(ImVec2 c, float R, float th, float a0, float a1) {
+    Pts p;
+    const int seg = 28, cap = 10;
+    for (int i = 0; i <= seg; i++) {
+        const float ang = a0 + (a1 - a0) * float(i) / float(seg);
+        p.push_back(add(c, mul(ImVec2(std::cos(ang), std::sin(ang)), R + th * 0.5f)));
+    }
+    const ImVec2 e1 = add(c, mul(ImVec2(std::cos(a1), std::sin(a1)), R));
+    for (int i = 1; i < cap; i++) {
+        const float ang = a1 + kPi * float(i) / float(cap);
+        p.push_back(add(e1, mul(ImVec2(std::cos(ang), std::sin(ang)), th * 0.5f)));
+    }
+    for (int i = seg; i >= 0; i--) {
+        const float ang = a0 + (a1 - a0) * float(i) / float(seg);
+        p.push_back(add(c, mul(ImVec2(std::cos(ang), std::sin(ang)), R - th * 0.5f)));
+    }
+    const ImVec2 e0 = add(c, mul(ImVec2(std::cos(a0), std::sin(a0)), R));
+    for (int i = 1; i < cap; i++) {
+        const float ang = a0 + kPi + kPi * float(i) / float(cap);
+        p.push_back(add(e0, mul(ImVec2(std::cos(ang), std::sin(ang)), th * 0.5f)));
+    }
+    return p;
 }
 
 void paintKidney(ImDrawList* dl, const Control& c, float a) {
     const float p = c.anim;
-    const float th = c.size2 * c.k * (1.0f - 0.08f * p);
+    const float th = c.size2 * c.k;
     const float a0 = -c.arcTo * kPi / 180.0f, a1 = -c.arcFrom * kPi / 180.0f;  // screen space (y down)
-    auto arc = [&](float radius, ImU32 color, float thickness) {
-        dl->PathArcTo(c.c, radius, a0, a1, 36);
-        dl->PathStroke(color, 0, thickness);
-    };
-    auto ends = [&](float rr, ImU32 color, bool filled, float thickness = 1.0f) {
-        for (float ang : {a0, a1}) {
-            const ImVec2 e(c.c.x + std::cos(ang) * c.r, c.c.y + std::sin(ang) * c.r);
-            if (filled) dl->AddCircleFilled(e, rr, color, 24);
-            else dl->AddCircle(e, rr, color, 24, thickness);
-        }
-    };
-    // shadow, body, glow, shine, rim
-    arc(c.r, col({0, 0, 0}, 0.35f * a), th * 1.18f);
-    ends(th * 0.59f, col({0, 0, 0}, 0.35f * a), true);
-    if (p > 0.01f) {
-        arc(c.r, col(c.accent, 0.55f * p * std::max(a, 0.6f)), th * 1.32f);
-        ends(th * 0.66f, col(c.accent, 0.55f * p * std::max(a, 0.6f)), true);
-    }
-    const ImU32 body = col(mix(kBody, {1, 1, 1}, 0.06f + 0.12f * p), (0.84f + 0.1f * p) * a + 0.05f);
-    arc(c.r, body, th);
-    ends(th * 0.5f, body, true);
-    arc(c.r + th * 0.18f, col({1, 1, 1}, 0.10f * a), th * 0.28f);
-    const float rimW = std::max(1.5f, th * 0.06f);
-    const ImU32 rim = col({1, 1, 1}, (0.55f + 0.45f * p) * a + 0.12f);
-    arc(c.r + th * 0.5f, rim, rimW);
-    arc(c.r - th * 0.5f, rim, rimW);
-    ends(th * 0.5f, rim, false, rimW);
-    const float mid = -(c.arcFrom + c.arcTo) * 0.5f * kPi / 180.0f;
-    label(dl, ImVec2(c.c.x + std::cos(mid) * c.r, c.c.y + std::sin(mid) * c.r), th * 0.62f, c.text,
-          col(kNeutral, std::clamp(a * 1.25f + 0.2f, 0.0f, 1.0f)));
+    const float height = th * 0.16f;
+    const ImVec2 top = add(c.c, ImVec2(0, -height * (1.0f - p)));
+    const Rgb base = darker(c.accent, 0.10f * p);
+    // shadow (several soft copies), side wall, top
+    for (int i = 2; i >= 0; i--)
+        kidneyFill(dl, add(c.c, ImVec2(0, th * (0.10f + 0.06f * float(i)))), c.r, th * (1.0f + 0.08f * float(i)), a0, a1, kBlack,
+                   a * (i == 0 ? 0.32f : 0.10f), 0.0f);
+    kidneyFill(dl, c.c, c.r, th, a0, a1, darker(c.accent, 0.45f), a, 0.6f);
+    kidneyFill(dl, top, c.r, th * (1.0f - 0.04f * p), a0, a1, base, a, 1.0f);
+    outline(dl, kidneyOutline(top, c.r, th, a0, a1), col(darker(c.accent, 0.55f), 0.9f * a), std::max(1.5f, th * 0.05f));
+    const float mid = (a0 + a1) * 0.5f;
+    const ImVec2 m = add(top, mul(ImVec2(std::cos(mid), std::sin(mid)), c.r));
+    if (p > 0.01f) kidneyFill(dl, top, c.r, th, a0, a1, kWhite, 0.16f * p * a, 0.0f);
+    glint(dl, add(m, ImVec2(-th * 0.18f, -th * 0.22f)), ImVec2(th * 0.24f, th * 0.10f), a * (1.0f - 0.6f * p));
+    ripple(dl, m, th * 0.6f, c.ripple, c.accent, a);
+    strokeText(dl, m, th * 0.50f, c.text, letterColour(base, false), std::clamp(a * 1.2f + 0.15f, 0.0f, 1.0f));
 }
 
 void paintRect(ImDrawList* dl, const Control& c, float a, bool trigger) {
     const float p = c.anim;
-    const float s = 1.0f - 0.06f * p;
-    const float w = c.w * s, h = c.h * s;
-    const ImVec2 mn(c.c.x - w * 0.5f, c.c.y - h * 0.5f), mx(c.c.x + w * 0.5f, c.c.y + h * 0.5f);
-    const float round = trigger ? h * 0.32f : h * 0.5f;
-    const Rgb body = c.tinted ? mix(kBody, c.accent, 0.42f) : kBody;
-    for (int i = 0; i < 3; i++) {
-        const float g = h * 0.05f * float(i + 1);
-        dl->AddRectFilled(ImVec2(mn.x - g, mn.y - g + h * 0.06f), ImVec2(mx.x + g, mx.y + g + h * 0.06f), col({0, 0, 0}, 0.16f * a),
-                          round + g);
-    }
-    if (p > 0.01f)
-        dl->AddRect(ImVec2(mn.x - h * 0.08f, mn.y - h * 0.08f), ImVec2(mx.x + h * 0.08f, mx.y + h * 0.08f),
-                    col(c.accent, 0.7f * p * std::max(a, 0.6f)), round + h * 0.08f, 0, h * 0.14f);
-    dl->AddRectFilledMultiColor(mn, mx, col(mix(body, {1, 1, 1}, 0.12f + 0.12f * p), (0.84f + 0.1f * p) * a + 0.05f),
-                                col(mix(body, {1, 1, 1}, 0.12f + 0.12f * p), (0.84f + 0.1f * p) * a + 0.05f),
-                                col(body, (0.80f + 0.1f * p) * a + 0.05f), col(body, (0.80f + 0.1f * p) * a + 0.05f));
-    // (AddRectFilledMultiColor has square corners: round them off with the body colour's rim pass.)
-    dl->AddRect(mn, mx, col(mix({1, 1, 1}, c.accent, c.tinted ? 0.45f : 0.1f), (0.55f + 0.45f * p) * a + 0.12f), round, 0,
-                std::max(1.5f, h * 0.05f));
+    const float w = c.w, h = c.h;
+    const float rad = trigger ? h * 0.42f : h * 0.5f;
+    const float height = h * 0.13f;
+    const Rgb base = darker(c.accent, 0.10f * p);
+    const ImVec2 top = add(c.c, ImVec2(0, -height * (1.0f - p)));
+    const Pts footprint = roundRectPts(c.c, w, h, rad);
+    dropShadow(dl, footprint, h * 0.12f, 0.5f * a);
+    plastic(dl, footprint, darker(c.accent, 0.45f), a, 0.6f, 0.0f);
+    const Pts body = roundRectPts(top, w * (1.0f - 0.02f * p), h * (1.0f - 0.03f * p), rad);
+    plastic(dl, body, base, a, 1.0f, 0.10f);
+    outline(dl, body, col(darker(c.accent, 0.55f), 0.9f * a), std::max(1.5f, h * 0.05f));
+    if (p > 0.01f) flat(dl, body, col(kWhite, 0.15f * p * a));
+    glint(dl, add(top, ImVec2(-w * 0.28f, -h * 0.22f)), ImVec2(w * 0.16f, h * 0.10f), a * (1.0f - 0.6f * p));
     if (trigger) {
-        // analog travel: a bar along the bottom fills while held
+        // analog travel: a groove along the bottom that fills while the trigger is held
         const float fill = (c.rightTrigger ? sTrigR : sTrigL).load() / 255.0f;
-        if (fill > 0)
-            dl->AddRectFilled(ImVec2(mn.x + round, mx.y - h * 0.16f), ImVec2(mn.x + round + (w - 2 * round) * fill, mx.y - h * 0.08f),
-                              col(c.accent, 0.8f * a + 0.1f), h * 0.04f);
+        const ImVec2 g0(top.x - w * 0.5f + rad, top.y + h * 0.28f), g1(top.x + w * 0.5f - rad, top.y + h * 0.36f);
+        dl->AddRectFilled(g0, g1, col(darker(base, 0.55f), 0.8f * a), h * 0.04f);
+        if (fill > 0) dl->AddRectFilled(g0, ImVec2(g0.x + (g1.x - g0.x) * fill, g1.y), col(lighter(kYellowC, 0.2f), a), h * 0.04f);
     }
-    label(dl, c.c, h * 0.5f, c.text, col(c.tinted ? Rgb{1, 1, 1} : kNeutral, std::clamp(a * 1.25f + 0.2f, 0.0f, 1.0f)));
+    ripple(dl, c.c, std::max(w, h) * 0.5f, c.ripple, c.accent, a);
+    strokeText(dl, add(top, ImVec2(0, trigger ? -h * 0.06f : 0.0f)), h * 0.42f, c.text, letterColour(base, c.tinted),
+               std::clamp(a * 1.2f + 0.15f, 0.0f, 1.0f));
+}
+
+// The D-pad: a raised plus in a round dish; the pressed arm dips and the pad leans toward it.
+Pts crossPts(ImVec2 c, float r, float arm) {
+    const float e = r * 0.92f;
+    return {{c.x - arm, c.y - e}, {c.x + arm, c.y - e}, {c.x + arm, c.y - arm}, {c.x + e, c.y - arm}, {c.x + e, c.y + arm},
+            {c.x + arm, c.y + arm}, {c.x + arm, c.y + e}, {c.x - arm, c.y + e}, {c.x - arm, c.y + arm}, {c.x - e, c.y + arm},
+            {c.x - e, c.y - arm}, {c.x - arm, c.y - arm}};
 }
 
 void paintDPad(ImDrawList* dl, Control& c, float a) {
-    const float r = c.r;
-    const float arm = r * 0.30f;  // half width of each bar
-    shadow(dl, c.c, r * 1.08f, 0.35f * a);
-    gradientDisc(dl, c.c, r * 1.10f, col(mix(kBody, {1, 1, 1}, 0.06f), 0.42f * a + 0.03f), col(kBody, 0.42f * a + 0.03f));
-    dl->AddCircle(c.c, r * 1.10f, col({1, 1, 1}, 0.30f * a + 0.05f), 48, std::max(1.5f, r * 0.03f));
-    const ImU32 body = col(mix(kBody, {1, 1, 1}, 0.08f), 0.85f * a + 0.06f);
-    const float round = arm * 0.35f;
-    dl->AddRectFilled(ImVec2(c.c.x - arm, c.c.y - r * 0.92f), ImVec2(c.c.x + arm, c.c.y + r * 0.92f), body, round);
-    dl->AddRectFilled(ImVec2(c.c.x - r * 0.92f, c.c.y - arm), ImVec2(c.c.x + r * 0.92f, c.c.y + arm), body, round);
+    const float r = c.r, arm = r * 0.31f;
     const float dt = ImGui::GetIO().DeltaTime;
+    ImVec2 lean(0, 0);
     for (int i = 0; i < 4; i++) {
-        c.armAnim[i] = c.dir[i] ? std::min(1.0f, c.armAnim[i] + dt * 14.0f) : std::max(0.0f, c.armAnim[i] - dt * 14.0f);
+        c.armAnim[i] = c.dir[i] ? std::min(1.0f, c.armAnim[i] + dt * 16.0f) : std::max(0.0f, c.armAnim[i] - dt * 10.0f);
         const float ang = (-90.0f + 90.0f * float(i)) * kPi / 180.0f;  // up, right, down, left (screen)
+        lean = add(lean, mul(ImVec2(std::cos(ang), std::sin(ang)), c.armAnim[i] * r * 0.035f));
+    }
+    // dish
+    const Pts dish = circlePts(c.c, r * 1.12f);
+    dropShadow(dl, dish, r * 0.05f, 0.30f * a);
+    plastic(dl, dish, darker(kGreyBody, 0.55f), a * 0.85f, -0.7f, 0.0f);  // concave
+    // shadow + side wall + top of the plus
+    const float height = r * 0.07f;
+    const ImVec2 top = add(add(c.c, ImVec2(0, -height)), lean);
+    flat(dl, crossPts(add(c.c, ImVec2(0, r * 0.06f)), r, arm * 1.04f), col(kBlack, 0.40f * a));
+    const Rgb wall = darker(kGreyBody, 0.45f);
+    plastic(dl, roundRectPts(c.c, arm * 2, r * 1.84f, arm * 0.35f), wall, a, 0.5f, 0.0f);
+    plastic(dl, roundRectPts(c.c, r * 1.84f, arm * 2, arm * 0.35f), wall, a, 0.5f, 0.0f);
+    plastic(dl, roundRectPts(top, arm * 2, r * 1.84f, arm * 0.35f), kGreyBody, a, 1.0f, 0.10f);
+    plastic(dl, roundRectPts(top, r * 1.84f, arm * 2, arm * 0.35f), kGreyBody, a, 1.0f, 0.10f);
+    outline(dl, crossPts(top, r, arm), col(darker(kGreyBody, 0.55f), 0.9f * a), std::max(1.5f, r * 0.03f));
+    for (int i = 0; i < 4; i++) {
+        const float ang = (-90.0f + 90.0f * float(i)) * kPi / 180.0f;
         const ImVec2 d(std::cos(ang), std::sin(ang));
         const ImVec2 n(-d.y, d.x);
         if (c.armAnim[i] > 0.01f) {
-            const ImVec2 p0(c.c.x + d.x * arm * 1.1f, c.c.y + d.y * arm * 1.1f), p1(c.c.x + d.x * r * 0.92f, c.c.y + d.y * r * 0.92f);
+            const ImVec2 p0 = add(top, mul(d, arm * 1.05f)), p1 = add(top, mul(d, r * 0.90f));
             dl->AddRectFilled(ImVec2(std::min(p0.x, p1.x) - std::fabs(n.x) * arm, std::min(p0.y, p1.y) - std::fabs(n.y) * arm),
                               ImVec2(std::max(p0.x, p1.x) + std::fabs(n.x) * arm, std::max(p0.y, p1.y) + std::fabs(n.y) * arm),
-                              col({1, 1, 1}, 0.30f * c.armAnim[i]), round);
+                              col(kBlack, 0.22f * c.armAnim[i] * a), arm * 0.35f);
         }
-        // arrow
-        const float s = r * 0.13f * (1.0f + 0.12f * c.armAnim[i]);
-        const ImVec2 tip(c.c.x + d.x * r * 0.72f, c.c.y + d.y * r * 0.72f);
-        const ImVec2 back(tip.x - d.x * s * 1.5f, tip.y - d.y * s * 1.5f);
-        dl->AddTriangleFilled(tip, ImVec2(back.x + n.x * s, back.y + n.y * s), ImVec2(back.x - n.x * s, back.y - n.y * s),
-                              col({1, 1, 1}, std::clamp((0.75f + 0.25f * c.armAnim[i]) * a * 1.2f + 0.1f, 0.0f, 1.0f)));
+        // engraved arrow: dark groove with a light lower edge
+        const float s = r * 0.12f;
+        const ImVec2 tip = add(top, mul(d, r * 0.72f));
+        const ImVec2 back = sub(tip, mul(d, s * 1.5f));
+        const ImVec2 t0 = tip, t1 = add(back, mul(n, s)), t2 = sub(back, mul(n, s));
+        dl->AddTriangleFilled(add(t0, ImVec2(0, s * 0.18f)), add(t1, ImVec2(0, s * 0.18f)), add(t2, ImVec2(0, s * 0.18f)),
+                              col(lighter(kGreyBody, 0.5f), 0.7f * a));
+        dl->AddTriangleFilled(t0, t1, t2, col(darker(kGreyBody, 0.6f), a));
     }
-    const ImU32 rim = col({1, 1, 1}, 0.55f * a + 0.12f);
-    const float rw = std::max(1.5f, r * 0.025f);
-    dl->AddRect(ImVec2(c.c.x - arm, c.c.y - r * 0.92f), ImVec2(c.c.x + arm, c.c.y + r * 0.92f), rim, round, 0, rw);
-    dl->AddRect(ImVec2(c.c.x - r * 0.92f, c.c.y - arm), ImVec2(c.c.x + r * 0.92f, c.c.y + arm), rim, round, 0, rw);
-    dl->AddCircleFilled(c.c, arm * 0.55f, col({0.25f, 0.26f, 0.3f}, 0.8f * a), 24);
+    glint(dl, add(top, ImVec2(-arm * 0.4f, -r * 0.62f)), ImVec2(arm * 0.45f, arm * 0.18f), a);
+    dl->AddCircleFilled(top, arm * 0.42f, col(darker(kGreyBody, 0.25f), a), 24);  // centre dimple
+    dl->AddCircle(top, arm * 0.42f, col(darker(kGreyBody, 0.55f), 0.8f * a), 24, std::max(1.0f, arm * 0.06f));
 }
 
 void paintStick(ImDrawList* dl, Control& c, float a) {
-    const float p = c.anim;
+    const float p = c.anim, r = c.r;
     const bool floatingIdle = !c.cStick && ms().floatingStick && !c.pressed;
     const float baseA = floatingIdle ? a * 0.7f : a;
-    const float r = c.r;
-    shadow(dl, c.c, r * 1.1f, 0.35f * baseA);
-    gradientDisc(dl, c.c, r, col(mix(kBody, {1, 1, 1}, 0.10f), 0.55f * baseA + 0.06f), col(kBody, 0.55f * baseA + 0.06f));
-    dl->AddCircle(c.c, r, col({1, 1, 1}, 0.45f * baseA + 0.06f), 48, std::max(1.5f, r * 0.03f));
-    // The gate: an octagon (Control Stick) or a circle (C-Stick), as on the controller.
-    const ImU32 gate = col(c.cStick ? c.accent : Rgb{1, 1, 1}, 0.45f * baseA + 0.05f);
-    if (!c.cStick) {
-        for (int i = 0; i < 8; i++) {
-            const float a0 = (22.5f + 45.0f * float(i)) * kPi / 180.0f, a1 = (22.5f + 45.0f * float(i + 1)) * kPi / 180.0f;
-            dl->PathLineTo(ImVec2(c.c.x + std::cos(a0) * r * 0.80f, c.c.y + std::sin(a0) * r * 0.80f));
-            if (i == 7) dl->PathLineTo(ImVec2(c.c.x + std::cos(a1) * r * 0.80f, c.c.y + std::sin(a1) * r * 0.80f));
-        }
-        dl->PathStroke(gate, ImDrawFlags_Closed, std::max(1.5f, r * 0.025f));
+    // socket with its gate: an octagon (Control Stick) or a circle (C-Stick), as on the controller
+    const Pts socket = circlePts(c.c, r);
+    dropShadow(dl, socket, r * 0.05f, 0.30f * baseA);
+    plastic(dl, socket, kGreyBody, baseA * 0.9f, 0.9f, 0.0f);
+    outline(dl, socket, col(darker(kGreyBody, 0.6f), 0.9f * baseA), std::max(1.5f, r * 0.025f));
+    Pts gate;
+    if (c.cStick) {
+        gate = circlePts(c.c, r * 0.80f, 40);
     } else {
-        dl->AddCircle(c.c, r * 0.80f, gate, 48, std::max(1.5f, r * 0.025f));
+        for (int i = 0; i < 8; i++) {
+            const float ang = (22.5f + 45.0f * float(i)) * kPi / 180.0f;
+            gate.push_back(add(c.c, mul(ImVec2(std::cos(ang), std::sin(ang)), r * 0.82f)));
+        }
     }
-    // Knob follows the finger; springs back when released.
+    plastic(dl, gate, kSocket, baseA, -0.8f, 0.0f);  // a recess: lit from below
+    outline(dl, gate, col(lighter(kGreyBody, 0.3f), 0.8f * baseA), std::max(1.5f, r * 0.03f));
+    // knob: follows the finger, springs back when released
     if (!c.pressed) {
         const float t = std::clamp(ImGui::GetIO().DeltaTime * 22.0f, 0.0f, 1.0f);
-        c.knob = ImVec2(c.knob.x * (1.0f - t), c.knob.y * (1.0f - t));
+        c.knob = mul(c.knob, 1.0f - t);
     }
-    const ImVec2 kc(c.c.x + c.knob.x, c.c.y + c.knob.y);
-    const float kr = r * (c.cStick ? 0.50f : 0.55f) * (1.0f + 0.06f * p);
-    shadow(dl, kc, kr, 0.6f * a);
-    if (p > 0.01f) dl->AddCircle(kc, kr * 1.15f, col(c.cStick ? c.accent : Rgb{1, 1, 1}, 0.45f * p), 40, kr * 0.18f);
-    const Rgb knob = c.cStick ? mix(kBody, c.accent, 0.75f) : Rgb{0.30f, 0.31f, 0.36f};
-    gradientDisc(dl, kc, kr, col(mix(knob, {1, 1, 1}, 0.18f), 0.85f * a + 0.1f), col(mix(knob, {0, 0, 0}, 0.25f), 0.85f * a + 0.1f));
-    if (!c.cStick) {
-        // ridged thumb cap
-        for (int i = 0; i < 12; i++) {
-            const float ang = 2.0f * kPi * float(i) / 12.0f;
-            dl->AddCircleFilled(ImVec2(kc.x + std::cos(ang) * kr * 0.62f, kc.y + std::sin(ang) * kr * 0.62f), kr * 0.07f,
-                                col({0, 0, 0}, 0.25f * a), 10);
+    const ImVec2 kc = add(c.c, c.knob);
+    const float kr = r * (c.cStick ? 0.46f : 0.56f);
+    const Rgb knob = c.cStick ? kYellowC : kGreyLight;
+    dropShadow(dl, circlePts(add(kc, ImVec2(0, kr * 0.08f)), kr), kr * 0.18f, 0.55f * a);
+    plastic(dl, circlePts(add(kc, ImVec2(0, kr * 0.10f)), kr), darker(knob, 0.45f), a, 0.6f, 0.0f);  // stem side
+    plastic(dl, circlePts(kc, kr), darker(knob, 0.08f * p), a, 1.0f, 0.08f);
+    outline(dl, circlePts(kc, kr), col(darker(knob, 0.55f), 0.9f * a), std::max(1.5f, kr * 0.05f));
+    // concave thumb cap with a ring of grip bumps (Control Stick) / a plain dish (C-Stick)
+    plastic(dl, circlePts(kc, kr * 0.70f), knob, a, -0.9f, 0.0f);
+    if (!c.cStick)
+        for (int i = 0; i < 16; i++) {
+            const float ang = 2.0f * kPi * float(i) / 16.0f;
+            const ImVec2 b = add(kc, mul(ImVec2(std::cos(ang), std::sin(ang)), kr * 0.85f));
+            dl->AddCircleFilled(add(b, ImVec2(0, kr * 0.02f)), kr * 0.065f, col(darker(knob, 0.5f), 0.6f * a), 10);
+            dl->AddCircleFilled(b, kr * 0.055f, col(lighter(knob, 0.35f), 0.8f * a), 10);
         }
-    }
-    shine(dl, kc, kr, 0.12f * a);
-    dl->AddCircle(kc, kr, col({1, 1, 1}, (0.45f + 0.4f * p) * a + 0.08f), 40, std::max(1.5f, kr * 0.06f));
-    if (c.text) label(dl, kc, kr * 0.9f, c.text, col({1, 1, 1}, std::clamp(a * 1.25f + 0.2f, 0.0f, 1.0f)));
+    glint(dl, add(kc, ImVec2(-kr * 0.40f, -kr * 0.48f)), ImVec2(kr * 0.26f, kr * 0.12f), a);
+    if (p > 0.01f) dl->AddCircle(kc, kr * 1.12f, col(lighter(knob, 0.3f), 0.5f * p * a), 40, kr * 0.12f);
+    if (c.text) strokeText(dl, kc, kr * 0.62f, c.text, darker(kYellowC, 0.55f), std::clamp(a * 1.2f + 0.15f, 0.0f, 1.0f), 0.2f);
 }
-
 void pollPhysicalPad() {
     const double t = now();
     if (t < sPadPoll) return;
@@ -805,6 +1038,7 @@ void draw() {
     for (auto& c : sCtl) {
         if (c.kind == Kind::DPad) dpadRepeat(c);
         c.anim = c.pressed ? std::min(1.0f, c.anim + dt * 18.0f) : std::max(0.0f, c.anim - dt * 9.0f);
+        if (c.ripple >= 0.0f) c.ripple = c.ripple + dt > kRippleSeconds ? -1.0f : c.ripple + dt;
         if (menuOpen && !c.menu) continue;
         if (!sVisible && !c.menu) continue;
         const float alpha = c.menu && (menuOpen || !sVisible) ? std::max(a, 0.85f) : a;

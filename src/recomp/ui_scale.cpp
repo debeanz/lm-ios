@@ -165,6 +165,24 @@ void frameCallback(const AuroraWindowSize* size) {
         // the text, other borders stay 1 px.)
         st.SeparatorTextBorderSize = std::max(1.0f, std::round(sBaseStyle.SeparatorTextBorderSize * s));
         st.MouseCursorScale = std::max(1.0f, sBaseStyle.MouseCursorScale * s);
+        if (mobile::enabled()) {
+            // Phone: thumb-sized targets. TouchExtraPadding widens every widget's hit area without
+            // moving it; taller frames and more row spacing keep neighbours from being hit; wide
+            // scrollbars and slider grabs a thumb can hold; rounded shapes as elsewhere on iOS.
+            st.TouchExtraPadding = ImVec2(6.0f * s, 4.0f * s);
+            st.FramePadding = ImVec2(st.FramePadding.x * 1.6f, st.FramePadding.y * 1.9f);
+            st.ItemSpacing = ImVec2(st.ItemSpacing.x * 1.4f, st.ItemSpacing.y * 1.8f);
+            st.ItemInnerSpacing = ImVec2(st.ItemInnerSpacing.x * 1.5f, st.ItemInnerSpacing.y * 1.5f);
+            st.ScrollbarSize = std::max(st.ScrollbarSize * 1.8f, 18.0f * s);
+            st.GrabMinSize = std::max(st.GrabMinSize * 2.2f, 22.0f * s);
+            st.WindowPadding = ImVec2(st.WindowPadding.x * 1.5f, st.WindowPadding.y * 1.2f);
+            st.WindowRounding = 14.0f * s;
+            st.ChildRounding = st.PopupRounding = 10.0f * s;
+            st.FrameRounding = st.GrabRounding = 7.0f * s;
+            st.TabRounding = 8.0f * s;
+            st.ScrollbarRounding = 9.0f * s;
+            st.WindowBorderSize = 0.0f;
+        }
         ImGui::GetStyle() = st;
         sStyleScale = s;
     }

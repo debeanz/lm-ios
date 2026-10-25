@@ -4,6 +4,7 @@
 #import <CoreHaptics/CoreHaptics.h>
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
@@ -13,6 +14,7 @@
 #include <sys/sysctl.h>
 #include <sys/utsname.h>
 
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 
@@ -80,6 +82,20 @@ namespace fs = std::filesystem;
     [self.player stopAtTime:CHHapticTimeImmediate error:nil];
     self.running = NO;
   }
+}
+@end
+
+// ---- Display rate ----------------------------------------------------------------------------
+
+// Only its preferred frame rate range matters: the system runs a ProMotion panel at the rate the
+// active display links ask for.
+@interface LMRateLink : NSObject
+@property(nonatomic, strong) CADisplayLink* link;
+- (void)tick:(CADisplayLink*)link;
+@end
+
+@implementation LMRateLink
+- (void)tick:(CADisplayLink*)link {
 }
 @end
 
@@ -151,6 +167,29 @@ void rumble(bool on) {
     if (sHaptics == nil) sHaptics = [[LMHaptics alloc] init];
     [sHaptics setOn:sRumbleWanted.load() ? YES : NO];
   });
+}
+
+int setDisplayRate(int hz) {
+  static LMRateLink* sRate = nil;
+  static std::atomic<int> sHz{0};
+  const int maxHz = int(UIScreen.mainScreen.maximumFramesPerSecond);
+  const int want = hz <= 0 ? 0 : std::min(hz, maxHz);
+  if (sHz.exchange(want) == want) return want;
+  onMain(^{
+    if (sRate == nil) {
+      sRate = [[LMRateLink alloc] init];
+      sRate.link = [CADisplayLink displayLinkWithTarget:sRate selector:@selector(tick:)];
+      [sRate.link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    }
+    const int h = sHz.load();
+    if (h <= 0) {
+      sRate.link.paused = YES;
+      return;
+    }
+    sRate.link.preferredFrameRateRange = CAFrameRateRangeMake(float(h), float(h), float(h));
+    sRate.link.paused = NO;
+  });
+  return want;
 }
 
 int thermalState() { return int(NSProcessInfo.processInfo.thermalState); }

@@ -77,6 +77,7 @@ std::vector<Field> fields() {
         num("mobile", "resolution", sSettings.mobile.resolution),
         num("mobile", "aspect", sSettings.mobile.aspect),
         num("mobile", "scaling", sSettings.mobile.scaling),
+        num("mobile", "upscaling", sSettings.mobile.upscaling),
         num("mobile", "ui_size", sSettings.mobile.uiSize),
         flag("mobile", "touch_controls", sSettings.mobile.touchControls),
         num("mobile", "touch_opacity", sSettings.mobile.touchOpacity),
@@ -331,6 +332,7 @@ void sanitize() {
     clampTo(m.resolution, 0, 4);
     clampTo(m.aspect, 0, 3);
     clampTo(m.scaling, 0, 1);
+    clampTo(m.upscaling, 0, 1);
     clampTo(m.uiSize, 0, 2);
     clampTo(m.touchOpacity, 20, 100);
     clampTo(m.touchSize, 70, 150);

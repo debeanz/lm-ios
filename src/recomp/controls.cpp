@@ -15,6 +15,8 @@
 // [controls.pad.<guid>]) through port::addSettingsExtension.
 #include "recomp/menu.h"
 #include "recomp/controls.h"
+
+#include "mobile/mobile.h"
 #include "recomp/ui_scale.h"
 
 #include "port/settings.h"
@@ -974,12 +976,19 @@ std::string portDeviceLabel(const PortConfig& pc) {
 
 bool portsTab() {
     bool changed = false;
-    ImGui::TextWrapped("Choose what drives each GameCube controller port. Luigi's Mansion is played on port 1. "
-                       "\"Auto\" takes the next connected controller that no other port has chosen.");
-    if (ImGui::BeginTable("ports", 4, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg)) {
+    // Phone (src/mobile): no keyboard; port 1 is the touch controller while no controller drives it.
+    const bool phone = mobile::enabled();
+    if (phone)
+        ImGui::TextWrapped("Luigi's Mansion is played on port 1. Without a controller, port 1 is the touch "
+                           "controller; a connected controller (Bluetooth or USB) takes over and the touch "
+                           "controls hide. \"Auto\" takes the next connected controller.");
+    else
+        ImGui::TextWrapped("Choose what drives each GameCube controller port. Luigi's Mansion is played on port 1. "
+                           "\"Auto\" takes the next connected controller that no other port has chosen.");
+    if (ImGui::BeginTable("ports", phone ? 3 : 4, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Port", ImGuiTableColumnFlags_WidthFixed, 40 * recomp::ui::scale());
         ImGui::TableSetupColumn("Device", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("+ Keyboard", ImGuiTableColumnFlags_WidthFixed, 80 * recomp::ui::scale());
+        if (!phone) ImGui::TableSetupColumn("+ Keyboard", ImGuiTableColumnFlags_WidthFixed, 80 * recomp::ui::scale());
         ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 1.1f);
         ImGui::TableHeadersRow();
         for (int port = 0; port < PAD_MAX_CONTROLLERS; port++) {
@@ -1001,7 +1010,7 @@ bool portsTab() {
                 };
                 option("Auto (next free controller)", "auto", "");
                 option("None", "none", "");
-                option("Keyboard only", "keyboard", "");
+                if (!phone) option("Keyboard only", "keyboard", "");
                 for (const auto& p : sPads) {
                     std::string label = p.name + (p.ordinal ? " #" + std::to_string(p.ordinal + 1) : "") + "##" +
                                         p.deviceId();
@@ -1010,14 +1019,18 @@ bool portsTab() {
                 ImGui::EndCombo();
             }
             ImGui::SetItemTooltip("The controller (or the keyboard) that drives this GameCube port.");
+            if (!phone) {
+                ImGui::TableNextColumn();
+                ImGui::BeginDisabled(pc.device == "keyboard" || pc.device == "none");
+                changed |= ImGui::Checkbox("##kb", &pc.keyboard);
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("Keyboard and mouse also control this port");
+            }
             ImGui::TableNextColumn();
-            ImGui::BeginDisabled(pc.device == "keyboard" || pc.device == "none");
-            changed |= ImGui::Checkbox("##kb", &pc.keyboard);
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Keyboard and mouse also control this port");
-            ImGui::TableNextColumn();
-            if (st.pad.id) {
+            if (phone && port == 0 && !st.pad.id && pc.device != "none") {
+                ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.45f, 1), "Touch controls");
+            } else if (st.pad.id) {
                 ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.45f, 1), "%s%s", st.pad.name.c_str(), st.keyboard ? " + keys" : "");
                 ImGui::SetItemTooltip("Connected: %s (%s)", st.pad.name.c_str(), typeName(st.pad.type));
             } else if (pc.device == "keyboard") {
@@ -1091,7 +1104,7 @@ bool portsTab() {
         ImGui::Dummy(ImVec2(0, 2 * r + 26 * k));
         ImGui::TextDisabled("buttons %04X  stick %d,%d  C %d,%d  L %u  R %u", s.button, s.stickX, s.stickY,
                             s.substickX, s.substickY, s.triggerLeft, s.triggerRight);
-        ImGui::TextDisabled("Keyboard keys reach the game only while this menu does not have focus.");
+        if (!mobile::enabled()) ImGui::TextDisabled("Keyboard keys reach the game only while this menu does not have focus.");
     }
     return changed;
 }
@@ -1099,6 +1112,7 @@ bool portsTab() {
 // Profile picker shared by the Bindings and Analog tabs: the keyboard, connected gamepad
 // models, and saved profiles of models that are not connected.
 void profilePicker(bool padsOnly) {
+    padsOnly = padsOnly || mobile::enabled();  // phone: controllers only, no keyboard profile
     std::vector<std::pair<std::string, std::string>> items;  // key, label
     if (!padsOnly) items.emplace_back("keyboard", "Keyboard and mouse");
     for (const auto& p : sPads) {
@@ -1162,9 +1176,18 @@ bool bindingsTab() {
     bool changed = false;
     profilePicker(false);
     Profile* prof = findProfile(sSelProfile);
-    if (!prof) return false;
-    ImGui::TextDisabled("Click a slot, then press a %s. Esc cancels, right-click clears.",
-                        prof->keyboard ? "key or mouse button" : "button or move a stick/trigger");
+    const bool phone = mobile::enabled();
+    if (!prof) {
+        if (phone) ImGui::TextWrapped("Connect a controller (Bluetooth or USB) to change its buttons. The touch controls "
+                                      "always use the GameCube layout.");
+        return false;
+    }
+    if (phone)  // no Esc key or right mouse button on a phone
+        ImGui::TextDisabled("Tap a slot, then press a button or move a stick/trigger. Tap it again to cancel; "
+                            "hold it to clear.");
+    else
+        ImGui::TextDisabled("Click a slot, then press a %s. Esc cancels, right-click clears.",
+                            prof->keyboard ? "key or mouse button" : "button or move a stick/trigger");
     const float secondsLeft =
         kCaptureSeconds - std::chrono::duration<float>(Clock::now() - sCap.start).count();
     if (ImGui::BeginChild("bindings", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 4))) {
@@ -1203,7 +1226,22 @@ bool bindingsTab() {
                     }
                     if (conflict) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.35f, 1));
                     if (capturing) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-                    if (ImGui::Button(label.c_str(), ImVec2(-1, 0)) && !sCap.active) beginCapture(sSelProfile, t, slot);
+                    static ImGuiID sHeldCleared = 0;  // phone: a long press cleared this slot; its release is no tap
+                    const bool tapped = ImGui::Button(label.c_str(), ImVec2(-1, 0));
+                    const ImGuiID slotId = ImGui::GetItemID();
+                    if (phone && !sCap.active && ImGui::IsItemActive() && ImGui::GetIO().MouseDownDuration[0] > 0.6f &&
+                        sHeldCleared != slotId) {
+                        if (prof->bind[t][slot]) {
+                            prof->bind[t][slot] = {};
+                            changed = true;
+                        }
+                        sHeldCleared = slotId;
+                    }
+                    if (tapped) {
+                        if (sHeldCleared == slotId) sHeldCleared = 0;
+                        else if (!sCap.active) beginCapture(sSelProfile, t, slot);
+                        else if (phone && capturing) endCapture();
+                    }
                     if (capturing) ImGui::PopStyleColor();
                     if (conflict) {
                         ImGui::PopStyleColor();

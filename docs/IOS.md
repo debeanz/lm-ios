@@ -100,6 +100,7 @@ The same rows and values as every phone port; changes apply and are saved at onc
 | Resolution | Native (panel size) / 2106x1084 / 1920x1080 / 1600x900 / 1280x720 (render height, never above the panel) |
 | Aspect Ratio | iPhone Default / 1.943:1 / 16:9 / 4:3 |
 | Screen Scaling | Fit (bars around the image, Aurora patch 0239) / Stretch |
+| Upscaling | Off / MetalFX (Apple's spatial upscaler, Aurora patch 0240): the game renders at the Resolution row's height and MetalFX fills the screen; with Resolution "Native" it renders at 2/3 of the panel (at full size there is nothing to upscale). Greyed out where MetalFX or the IOSurface/MTLSharedEvent interop is missing; any failure falls back to the normal scaling (logged as `MetalFX ...`). Idle with the CRT filter on |
 | Frame Rate | 30 / 60 / 120 FPS (ProMotion); above 30 the frames in between are interpolated, the game logic stays at 30 |
 | Show FPS | Off / On |
 | UI Size | Small / Default / Large (menus at about 1.5x the PC size by default) |

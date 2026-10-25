@@ -12,6 +12,7 @@ namespace mobile::native {
 bool isIOS() { return false; }
 void haptic(int) {}
 void rumble(bool) {}
+int setDisplayRate(int) { return 0; }
 int thermalState() { return -1; }
 long long footprintMB() { return -1; }
 long long availableMemoryMB() { return -1; }

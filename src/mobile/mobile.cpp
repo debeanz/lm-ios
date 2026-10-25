@@ -15,6 +15,7 @@
 #include <aurora/aurora.h>
 #include <aurora/dvd.h>
 #include <aurora/event.h>
+#include <aurora/metalfx.h>
 #include <dolphin/pad.h>
 #include <dolphin/vi.h>
 #include <imgui.h>
@@ -82,11 +83,17 @@ int frameRateIndex() {
     return fps >= 100 ? 2 : fps >= 45 ? 1 : 0;
 }
 
-// Render height of the Resolution row, never above the panel; 0 = the panel's own.
+constexpr const char* kUpscalingLabels[] = {"Off", "MetalFX"};
+
+// MetalFX upscaling chosen and possible on this device (Aurora 0240).
+bool metalfxOn() { return ms().upscaling == 1 && aurora_metalfx_available(); }
+
+// Render height of the Resolution row, never above the panel; 0 = the panel's own. With MetalFX,
+// "Native" renders at 2/3 of the panel instead (at the panel's own size there is nothing to upscale).
 int renderHeight() {
     const int idx = std::clamp(ms().resolution, 0, 4);
-    if (idx == 0) return 0;
     const int panel = nativeHeight();
+    if (idx == 0) return metalfxOn() && panel > 0 ? (panel * 2 / 3) & ~1 : 0;
     return panel > 0 ? std::min(kResolutionHeights[idx], panel) : kResolutionHeights[idx];
 }
 
@@ -94,10 +101,11 @@ void logSettings(const char* why) {
     const auto& m = ms();
     const auto& v = port::settings().video;
     sessionlog::line("settings",
-                     "%s: resolution '%s' (render height %d), aspect '%s', scaling '%s', %d fps, show fps %s, UI '%s', "
-                     "touch %s (opacity %d%%, size %d%%, stick %s), vibration %s, enhanced lighting %s, MSAA %dx",
+                     "%s: resolution '%s' (render height %d), aspect '%s', scaling '%s', upscaling '%s' (%s), %d fps, show fps %s, "
+                     "UI '%s', touch %s (opacity %d%%, size %d%%, stick %s), vibration %s, enhanced lighting %s, MSAA %dx",
                      why, kResolutionLabels[std::clamp(m.resolution, 0, 4)], renderHeight(), kAspectLabels[std::clamp(m.aspect, 0, 3)],
-                     kScalingLabels[std::clamp(m.scaling, 0, 1)], v.targetFps, port::settings().enhancements.showFps ? "on" : "off",
+                     kScalingLabels[std::clamp(m.scaling, 0, 1)], kUpscalingLabels[std::clamp(m.upscaling, 0, 1)],
+                     aurora_metalfx_status(), v.targetFps, port::settings().enhancements.showFps ? "on" : "off",
                      kUiSizeLabels[std::clamp(m.uiSize, 0, 2)], m.touchControls ? "on" : "off", m.touchOpacity, m.touchSize,
                      m.floatingStick ? "floating" : "fixed", m.haptics ? "on" : "off",
                      port::settings().enhancedLighting.enabled ? "on" : "off", v.msaa);
@@ -114,6 +122,7 @@ void logHeader() {
     sessionlog::line("app", "Device:        %s, %s, %lld MB RAM", native::deviceModel().c_str(), native::osVersion().c_str(),
                      native::physicalMemoryMB());
     sessionlog::line("app", "GPU:           %s", native::gpuName().c_str());
+    sessionlog::line("app", "MetalFX:       %s", aurora_metalfx_available() ? "available" : aurora_metalfx_status());
     sessionlog::line("app", "Screen:        %ux%u px (%ux%u pt, scale %.2f), up to %d Hz, safe area insets L%.0f T%.0f R%.0f B%.0f",
                      ws.native_fb_width, ws.native_fb_height, ws.width, ws.height, ws.scale, native::maxRefreshRate(), l, t, r, b);
     sessionlog::line("app", "Memory:        %s", memorySummary().c_str());
@@ -136,6 +145,40 @@ struct Perf {
     u32 guestAtStart = 0;
 } sPerf;
 
+// Host loop steps (mobile.h frameBegin/phase): per-window samples and the slowest frame's split.
+constexpr int kSteps = 5;
+constexpr const char* kStepNames[kSteps] = {"pace", "begin", "game", "ui", "end"};
+struct Steps {
+    std::vector<float> ms[kSteps];
+    float cur[kSteps] = {};
+    float worstTotal = 0;
+    float worst[kSteps] = {};
+    Clock::time_point mark{};
+    bool open = false;
+} sSteps;
+
+std::string stepSummary() {
+    std::string out;
+    char buf[96];
+    for (int i = 0; i < kSteps; i++) {
+        auto& v = sSteps.ms[i];
+        if (v.empty()) continue;
+        std::sort(v.begin(), v.end());
+        std::snprintf(buf, sizeof(buf), "%s%s %.1f/%.1f/%.1f", out.empty() ? "" : ", ", kStepNames[i], v[v.size() / 2],
+                      v[v.size() * 95 / 100], v.back());
+        out += buf;
+    }
+    if (out.empty()) return "no game-loop samples";
+    out = "ms median/p95/max: " + out + "; slowest frame " ;
+    std::snprintf(buf, sizeof(buf), "%.0f ms =", sSteps.worstTotal);
+    out += buf;
+    for (int i = 0; i < kSteps; i++) {
+        std::snprintf(buf, sizeof(buf), " %s %.1f", kStepNames[i], sSteps.worst[i]);
+        out += buf;
+    }
+    return out;
+}
+
 void perfTick() {
     const auto t = Clock::now();
     const double dt = std::chrono::duration<double>(t - sPerf.last).count();
@@ -156,8 +199,11 @@ void perfTick() {
     sessionlog::line("perf", "avg %.1f fps (target %d), game %.1f fps, dropped %d, worst frame %.0f ms, %s, input %s", sPerf.frames / span,
                      target, double(guest - sPerf.guestAtStart) / span, sPerf.drops, sPerf.worst * 1000.0, memorySummary().c_str(),
                      pad ? pad : touch::visible() ? "touch" : "none");
+    sessionlog::line("perf", "game loop %s", stepSummary().c_str());
     sPerf = Perf{};
     sPerf.guestAtStart = guest;
+    for (auto& v : sSteps.ms) v.clear();
+    sSteps.worstTotal = 0;
 }
 
 void onNativeEvent(const char* what) {
@@ -324,6 +370,39 @@ void onBackground() {
     sessionlog::flush();
 }
 
+void frameBegin() {
+    if (!enabled()) return;
+    if (sSteps.open) {  // the previous iteration ended without its last step (paused, a hold frame)
+        float total = 0;
+        for (int i = 0; i < kSteps; i++) total += sSteps.cur[i];
+        if (total > sSteps.worstTotal) {
+            sSteps.worstTotal = total;
+            std::copy(std::begin(sSteps.cur), std::end(sSteps.cur), std::begin(sSteps.worst));
+        }
+    }
+    std::fill(std::begin(sSteps.cur), std::end(sSteps.cur), 0.0f);
+    sSteps.mark = Clock::now();
+    sSteps.open = true;
+}
+
+void phase(int step) {
+    if (!enabled() || !sSteps.open || step < 0 || step >= kSteps) return;
+    const auto now = Clock::now();
+    const float ms = std::chrono::duration<float, std::milli>(now - sSteps.mark).count();
+    sSteps.mark = now;
+    sSteps.cur[step] = ms;
+    if (sSteps.ms[step].size() < 20000) sSteps.ms[step].push_back(ms);
+    if (step == kSteps - 1) {
+        float total = 0;
+        for (int i = 0; i < kSteps; i++) total += sSteps.cur[i];
+        if (total > sSteps.worstTotal) {
+            sSteps.worstTotal = total;
+            std::copy(std::begin(sSteps.cur), std::end(sSteps.cur), std::begin(sSteps.worst));
+        }
+        sSteps.open = false;
+    }
+}
+
 void onForeground() { sessionlog::line("app", "back in the foreground; %s", memorySummary().c_str()); }
 
 void applyPad(PADStatus* status) { touch::applyPad(status); }
@@ -343,10 +422,24 @@ bool fitScaling() { return ms().scaling == 0; }
 
 float uiMultiplier() { return kUiSizeMultipliers[std::clamp(ms().uiSize, 0, 2)]; }
 
+namespace {
+int sRateLock = 0;
+}
+
 void applyDisplay() {
     const int h = renderHeight();
     VISetFrameBufferScale(h > 0 ? float(h) / 480.0f : 0.0f);
+    aurora_set_metalfx(metalfxOn());  // cheap every frame (an atomic store)
+    // Panel refresh held at the frame rate (30 FPS: the game's own frames, shown at 60 Hz).
+    const int want = port::settings().video.targetFps >= 100 ? 120 : 60;
+    if (want != sRateLock) {
+        const int got = native::setDisplayRate(want);
+        if (got > 0) sessionlog::line("display", "panel refresh held at %d Hz (asked %d)", got, want);
+        sRateLock = got;
+    }
 }
+
+float displayRateLock() { return float(sRateLock); }
 
 void safeAreaInsets(float& left, float& top, float& right, float& bottom) {
     left = top = right = bottom = 0;
@@ -382,6 +475,29 @@ bool drawSettingsTab() {
         display |= row("Resolution", resLabels, 5, m.resolution);
         display |= row("Aspect Ratio", kAspectLabels, 4, m.aspect);
         display |= row("Screen Scaling", kScalingLabels, 2, m.scaling);
+        {
+            // MetalFX (Aurora 0240): the game renders at the Resolution row's height (Native: 2/3 of
+            // the panel) and Apple's spatial upscaler fills the screen. Disabled where unavailable.
+            const bool fx = aurora_metalfx_available();
+            ImGui::BeginDisabled(!fx);
+            int up = fx ? m.upscaling : 0;
+            if (row("Upscaling", kUpscalingLabels, 2, up)) {
+                m.upscaling = up;
+                display = true;
+            }
+            ImGui::EndDisabled();
+            if (!fx) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("MetalFX is not available on this device.");
+            } else if (m.upscaling == 1) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("Sharper picture from a lower render resolution (Native renders at 2/3).");
+            }
+        }
         int fr = frameRateIndex();
         if (row("Frame Rate", kFrameRateLabels, 3, fr)) {
             s.video.targetFps = kFrameRates[fr];

@@ -14,6 +14,12 @@ bool isIOS();
 void haptic(int style);
 void rumble(bool on);
 
+// ProMotion panels pick their refresh rate from what the app asks for: a display link requesting
+// exactly `hz` (60 or 120) runs the panel at that rate, so every presented frame lands on a refresh
+// (presents on a timer at 60 while the panel ran at 120 were shown for 1 or 3 refreshes: judder).
+// 0 = no request (the system decides). Returns the rate in effect (0 if unknown).
+int setDisplayRate(int hz);
+
 // Device facts for the log header and the [perf] lines; -1 / empty when unknown.
 int thermalState();              // 0 nominal, 1 fair, 2 serious, 3 critical
 long long footprintMB();         // what iOS counts toward the app's memory limit (incl. GPU)

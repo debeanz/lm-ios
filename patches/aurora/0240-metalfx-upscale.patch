@@ -1,0 +1,584 @@
+diff --git a/cmake/aurora_core.cmake b/cmake/aurora_core.cmake
+index 5647ce3..9c2a486 100644
+--- a/cmake/aurora_core.cmake
++++ b/cmake/aurora_core.cmake
+@@ -100,6 +100,10 @@ if (AURORA_ENABLE_GX)
+         target_sources(aurora_core PRIVATE lib/dawn/MetalBinding.mm)
+         set_source_files_properties(lib/dawn/MetalBinding.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+         target_link_options(aurora_core PUBLIC "LINKER:-weak_framework,Metal")
++        # 0240: MetalFX spatial upscaling of the presented frame (include/aurora/metalfx.h).
++        target_sources(aurora_core PRIVATE lib/webgpu/metalfx.mm)
++        set_source_files_properties(lib/webgpu/metalfx.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
++        target_link_options(aurora_core PUBLIC "LINKER:-weak_framework,MetalFX" "LINKER:-framework,IOSurface")
+     endif ()
+     if (DAWN_ENABLE_D3D11)
+         target_compile_definitions(aurora_core PRIVATE DAWN_ENABLE_BACKEND_D3D11)
+diff --git a/include/aurora/metalfx.h b/include/aurora/metalfx.h
+new file mode 100644
+index 0000000..4796353
+--- /dev/null
++++ b/include/aurora/metalfx.h
+@@ -0,0 +1,28 @@
++#ifndef AURORA_METALFX_H
++#define AURORA_METALFX_H
++// MetalFX spatial upscaling of the presented game image (Apple platforms, Metal backend).
++//
++// When on, the game frame (render resolution) is upscaled to the present viewport by Apple's
++// MTLFXSpatialScaler instead of Aurora's present resample. It needs the Dawn features
++// SharedTextureMemoryIOSurface and SharedFenceMTLSharedEvent (requested on Apple when the adapter
++// has them) and a device MetalFX supports. Whenever any of that is missing or a step fails, the
++// normal resample is used (logged once with the reason); never a black frame. It is idle while a
++// post-process chain (postfx.h) is active or the frame is not smaller than the viewport.
++#ifdef __cplusplus
++extern "C" {
++#else
++#include <stdbool.h>
++#endif
++
++// Any thread. Takes effect at the next present.
++void aurora_set_metalfx(bool enabled);
++// After aurora_initialize: whether MetalFX can run on this device (features, MetalFX support).
++bool aurora_metalfx_available(void);
++// Short state for logs, e.g. "active 1280x590 -> 2796x1290", "off", "unavailable: <reason>".
++const char* aurora_metalfx_status(void);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
+diff --git a/lib/aurora.cpp b/lib/aurora.cpp
+index 9e4b41a..97872c8 100644
+--- a/lib/aurora.cpp
++++ b/lib/aurora.cpp
+@@ -1,6 +1,7 @@
+ #include <aurora/aurora.h>
+ #include <aurora/time.hpp>
+ #include <aurora/present_timing.h>
++#include <aurora/metalfx.h>
+ #include "activity.hpp"
+ 
+ #include <algorithm>
+@@ -29,6 +30,7 @@
+ #include "webgpu/gpu.hpp"
+ #include "webgpu/gpu_prof.hpp"
+ #include "webgpu/postfx.hpp"
++#include "webgpu/metalfx.hpp"
+ #include <webgpu/webgpu_cpp.h>
+ #endif
+ 
+@@ -316,6 +318,7 @@ void shutdown() noexcept {
+ #endif
+   imgui::shutdown();
+   webgpu::postfx::shutdown();
++  webgpu::metalfx::shutdown();
+   gfx::shutdown();
+   webgpu::shutdown();
+ #endif
+@@ -649,8 +652,13 @@ void end_frame() noexcept {
+       if (rmlBindGroup && !rmlOverlay) {
+         presentBindGroup = rmlBindGroup;
+       } else if (!postfx) {
+-        const auto& resampledSource = webgpu::resample_present_source(encoder, viewport);
+-        presentBindGroup = webgpu::create_copy_bind_group(resampledSource);
++        // 0240: MetalFX upscaling (Apple, aurora_set_metalfx); nullptr: the normal resample.
++        if (const auto* upscaled = webgpu::metalfx::upscale(viewport, !sLateSubmit)) {
++          presentBindGroup = webgpu::create_copy_bind_group(*upscaled);
++        } else {
++          const auto& resampledSource = webgpu::resample_present_source(encoder, viewport);
++          presentBindGroup = webgpu::create_copy_bind_group(resampledSource);
++        }
+       }
+       {
+         const std::array attachments{
+@@ -715,6 +723,7 @@ void end_frame() noexcept {
+       const activity::Scope submit{activity::Thread::RenderWorker, "submitting the present blit (Queue::Submit)"};
+       g_queue.Submit(1, &buffer);
+     }
++    webgpu::metalfx::after_present_submit();  // 0240: the upscaled frame's access ends here
+     const int64_t timingSubmitNs = present_timing::now_ns();
+     webgpu::gpu_prof::after_submit();
+     if (canPresent && g_surface) {
+@@ -867,6 +876,13 @@ const AuroraBackend* aurora_get_available_backends(size_t* count) {
+ }
+ void aurora_set_log_level(AuroraLogLevel level) { aurora::g_config.logLevel = level; }
+ void aurora_set_pause_on_focus_lost(bool value) { aurora::g_config.pauseOnFocusLost = value; }
++
++#if !defined(__APPLE__) || !defined(AURORA_ENABLE_GX)
++// 0240: MetalFX exists only on Apple platforms (lib/webgpu/metalfx.mm).
++void aurora_set_metalfx(bool) {}
++bool aurora_metalfx_available(void) { return false; }
++const char* aurora_metalfx_status(void) { return "unavailable: not an Apple platform"; }
++#endif
+ void aurora_set_background_input(bool value) {
+   aurora::g_config.allowJoystickBackgroundEvents = value;
+   aurora::window::set_background_input(value);
+diff --git a/lib/webgpu/gpu.cpp b/lib/webgpu/gpu.cpp
+index 6266cfa..c279c18 100644
+--- a/lib/webgpu/gpu.cpp
++++ b/lib/webgpu/gpu.cpp
+@@ -27,6 +27,7 @@
+ #include "../internal.hpp"
+ #include "../window.hpp"
+ #include "gpu_prof.hpp"
++#include "metalfx.hpp"
+ 
+ #ifdef WEBGPU_DAWN
+ #include "../dawn/TracyPlatform.hpp"
+@@ -1004,6 +1005,20 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
+       requiredFeatures.push_back(wgpu::FeatureName::ImplicitDeviceSynchronization);
+       Log.info("Implicit device synchronization on");
+     }
++#ifdef __APPLE__
++    // 0240: MetalFX upscaling (metalfx.mm) shares IOSurface textures and MTLSharedEvent fences
++    // with its own Metal queue. Requested only when the adapter has both; otherwise MetalFX is
++    // reported unavailable and the present resample is used.
++    {
++      const bool interop = g_adapter.HasFeature(wgpu::FeatureName::SharedTextureMemoryIOSurface) &&
++                           g_adapter.HasFeature(wgpu::FeatureName::SharedFenceMTLSharedEvent);
++      if (interop) {
++        requiredFeatures.push_back(wgpu::FeatureName::SharedTextureMemoryIOSurface);
++        requiredFeatures.push_back(wgpu::FeatureName::SharedFenceMTLSharedEvent);
++      }
++      metalfx::set_interop_supported(interop);
++    }
++#endif
+     std::string featureList;
+     for (auto featureName : requiredFeatures) {
+       featureList += "\n  ";
+diff --git a/lib/webgpu/metalfx.hpp b/lib/webgpu/metalfx.hpp
+new file mode 100644
+index 0000000..305ab68
+--- /dev/null
++++ b/lib/webgpu/metalfx.hpp
+@@ -0,0 +1,24 @@
++#pragma once
++
++#include "gpu.hpp"
++
++// MetalFX spatial upscaling of the present source (include/aurora/metalfx.h). Apple only; the
++// stubs elsewhere keep the present path unchanged.
++namespace aurora::webgpu::metalfx {
++#ifdef __APPLE__
++// Device creation (gpu.cpp): the interop features were enabled on the device.
++void set_interop_supported(bool supported) noexcept;
++// Render worker, present: the upscaled frame at the viewport's size, or nullptr to present the
++// normal resampled source. `frameSubmitted`: the frame's own work is already on the queue (the
++// copy into the scaler's input is submitted separately, before the present encoder).
++const TextureWithSampler* upscale(const Viewport& viewport, bool frameSubmitted);
++// Render worker, right after the present command buffer was submitted.
++void after_present_submit();
++void shutdown();
++#else
++inline void set_interop_supported(bool) noexcept {}
++inline const TextureWithSampler* upscale(const Viewport&, bool) { return nullptr; }
++inline void after_present_submit() {}
++inline void shutdown() {}
++#endif
++} // namespace aurora::webgpu::metalfx
+diff --git a/lib/webgpu/metalfx.mm b/lib/webgpu/metalfx.mm
+new file mode 100644
+index 0000000..8a3456a
+--- /dev/null
++++ b/lib/webgpu/metalfx.mm
+@@ -0,0 +1,400 @@
++// MetalFX spatial upscaling of the present source (include/aurora/metalfx.h). Compiled with ARC.
++//
++// Two IOSurfaces are shared between Dawn and our own Metal command queue:
++//   input  (game frame size):  Dawn copies the present source in; MetalFX reads it.
++//   output (viewport size):    MetalFX writes it; Dawn samples it in the present blit.
++// Ordering, every frame (render worker):
++//   1. Dawn BeginAccess(input), waiting on our MTLSharedEvent for MetalFX's previous read;
++//      copy present source -> input; submit; EndAccess(input) -> Dawn's fences.
++//   2. Our command buffer waits on those fences and on Dawn's fences from its last read of the
++//      output (after_present_submit), runs the MTLFXSpatialScaler, signals our event (value + 1).
++//   3. Dawn BeginAccess(output) waiting on our event at that value; the present blit samples it;
++//      after the present submit, EndAccess(output) -> fences that step 2 waits on next frame.
++// Nothing waits on the CPU. Any failure is logged once and the normal resample is used.
++#include "metalfx.hpp"
++
++#include <aurora/metalfx.h>
++#include <webgpu/webgpu_cpp.h>
++
++#import <Foundation/Foundation.h>
++#import <IOSurface/IOSurface.h>
++#import <Metal/Metal.h>
++#import <MetalFX/MetalFX.h>
++
++#include <algorithm>
++#include <atomic>
++#include <cmath>
++#include <cstdio>
++#include <mutex>
++#include <string>
++#include <vector>
++
++#include "../internal.hpp"
++
++namespace aurora::webgpu::metalfx {
++namespace {
++Module Log("aurora::metalfx");
++
++constexpr wgpu::TextureFormat kFormat = wgpu::TextureFormat::BGRA8Unorm;
++
++std::atomic<bool> g_enabled{false};
++std::atomic<bool> g_interop{false};
++
++std::mutex g_statusMutex;
++std::string g_status = "off";
++int g_available = -1;  // -1 not checked yet (under g_statusMutex)
++std::string g_unavailableWhy;
++
++void set_status(const std::string& s) {
++  std::lock_guard lk(g_statusMutex);
++  if (s != g_status) {
++    g_status = s;
++    Log.info("MetalFX: {}", s);
++  }
++}
++
++struct Shared {
++  IOSurfaceRef surface = nullptr;
++  id<MTLTexture> mtl = nil;
++  wgpu::SharedTextureMemory memory;
++  wgpu::Texture texture;
++  uint32_t width = 0;
++  uint32_t height = 0;
++};
++
++struct Wait {
++  id<MTLSharedEvent> event;
++  uint64_t value;
++};
++
++id<MTLDevice> g_mtlDevice = nil;
++id<MTLCommandQueue> g_mtlQueue = nil;
++id<MTLSharedEvent> g_event = nil;  // signalled by our command buffers
++wgpu::SharedFence g_eventFence;   // the same event, imported into Dawn
++uint64_t g_eventValue = 0;
++id<MTLFXSpatialScaler> g_scaler = nil;
++Shared g_in, g_out;
++TextureWithSampler g_outSampled;
++wgpu::Sampler g_sampler;
++bool g_outInAccess = false;
++std::vector<Wait> g_outWaits;  // Dawn's fences after its last read of the output
++bool g_broken = false;
++
++uint32_t extent(float v) { return std::max(1u, static_cast<uint32_t>(std::lround(std::max(v, 1.f)))); }
++
++// Whether MetalFX can run here (the Dawn interop features, MetalFX support of the GPU).
++bool available(std::string* why) {
++  std::lock_guard lk(g_statusMutex);
++  if (g_available < 0) {
++    std::string reason;
++    if (!g_interop.load()) {
++      reason = "the graphics device lacks Dawn's IOSurface / MTLSharedEvent interop";
++    } else if (@available(iOS 16.0, macOS 13.0, *)) {
++      if (g_mtlDevice == nil) g_mtlDevice = MTLCreateSystemDefaultDevice();
++      if (g_mtlDevice == nil) reason = "no Metal device";
++      else if (![MTLFXSpatialScalerDescriptor supportsDevice:g_mtlDevice]) reason = "MetalFX does not support this GPU";
++    } else {
++      reason = "needs iOS 16 / macOS 13";
++    }
++    g_available = reason.empty() ? 1 : 0;
++    g_unavailableWhy = reason;
++    if (!reason.empty()) Log.info("MetalFX unavailable: {}", reason);
++  }
++  if (why) *why = g_unavailableWhy;
++  return g_available == 1;
++}
++
++void release(Shared& s) {
++  s.texture = {};
++  s.memory = {};
++  s.mtl = nil;
++  if (s.surface) CFRelease(s.surface);
++  s.surface = nullptr;
++  s.width = s.height = 0;
++}
++
++void release_all() {
++  if (g_outInAccess && g_out.memory) {
++    wgpu::SharedTextureMemoryEndAccessState state;
++    g_out.memory.EndAccess(g_out.texture, &state);
++    g_outInAccess = false;
++  }
++  g_outWaits.clear();
++  g_outSampled = {};
++  release(g_in);
++  release(g_out);
++  g_scaler = nil;
++}
++
++// Stops MetalFX for this run (normal resample from here on), with the reason in the log.
++void fail(const std::string& why) {
++  Log.warn("MetalFX disabled for this run: {}", why);
++  release_all();
++  g_broken = true;
++  set_status("failed: " + why);
++}
++
++IOSurfaceRef make_surface(uint32_t w, uint32_t h) {
++  const size_t bytesPerRow = IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, size_t(w) * 4);
++  NSDictionary* props = @{
++    (__bridge id)kIOSurfaceWidth : @(w),
++    (__bridge id)kIOSurfaceHeight : @(h),
++    (__bridge id)kIOSurfaceBytesPerElement : @4,
++    (__bridge id)kIOSurfaceBytesPerRow : @(bytesPerRow),
++    (__bridge id)kIOSurfaceAllocSize : @(bytesPerRow * h),
++    (__bridge id)kIOSurfacePixelFormat : @(uint32_t('BGRA')),
++  };
++  return IOSurfaceCreate((__bridge CFDictionaryRef)props);
++}
++
++bool make_shared(Shared& s, uint32_t w, uint32_t h, MTLTextureUsage mtlUsage, wgpu::TextureUsage usage, const char* label,
++                 std::string& why) {
++  release(s);
++  s.surface = make_surface(w, h);
++  if (!s.surface) {
++    why = std::string("IOSurfaceCreate failed for the ") + label;
++    return false;
++  }
++  MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
++                                                                               width:w
++                                                                              height:h
++                                                                           mipmapped:NO];
++  d.usage = mtlUsage;
++  d.storageMode = MTLStorageModeShared;
++  s.mtl = [g_mtlDevice newTextureWithDescriptor:d iosurface:s.surface plane:0];
++  if (s.mtl == nil) {
++    why = std::string("no Metal texture over the ") + label + " IOSurface";
++    return false;
++  }
++  wgpu::SharedTextureMemoryIOSurfaceDescriptor ioDesc;
++  ioDesc.ioSurface = s.surface;
++  wgpu::SharedTextureMemoryDescriptor memDesc;
++  memDesc.nextInChain = &ioDesc;
++  memDesc.label = label;
++  s.memory = g_device.ImportSharedTextureMemory(&memDesc);
++  if (!s.memory) {
++    why = std::string("Dawn could not import the ") + label + " IOSurface";
++    return false;
++  }
++  wgpu::TextureDescriptor td;
++  td.label = label;
++  td.usage = usage;
++  td.dimension = wgpu::TextureDimension::e2D;
++  td.size = {w, h, 1};
++  td.format = kFormat;
++  td.mipLevelCount = 1;
++  td.sampleCount = 1;
++  s.texture = s.memory.CreateTexture(&td);
++  if (!s.texture) {
++    why = std::string("Dawn could not create the ") + label + " texture";
++    return false;
++  }
++  s.width = w;
++  s.height = h;
++  return true;
++}
++
++// Scaler and shared textures for these sizes (recreated when they change).
++bool ensure(uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH) {
++  if (g_scaler != nil && g_in.width == inW && g_in.height == inH && g_out.width == outW && g_out.height == outH) return true;
++  release_all();
++  std::string why;
++  if (@available(iOS 16.0, macOS 13.0, *)) {
++    if (g_mtlQueue == nil) g_mtlQueue = [g_mtlDevice newCommandQueue];
++    if (g_event == nil) {
++      g_event = [g_mtlDevice newSharedEvent];
++      g_eventValue = 0;
++      wgpu::SharedFenceMTLSharedEventDescriptor eventDesc;
++      eventDesc.sharedEvent = (__bridge void*)g_event;
++      wgpu::SharedFenceDescriptor fenceDesc;
++      fenceDesc.nextInChain = &eventDesc;
++      fenceDesc.label = "MetalFX event";
++      g_eventFence = g_device.ImportSharedFence(&fenceDesc);
++    }
++    if (g_mtlQueue == nil || g_event == nil || !g_eventFence) {
++      fail("could not create the Metal queue / shared event");
++      return false;
++    }
++    MTLFXSpatialScalerDescriptor* sd = [MTLFXSpatialScalerDescriptor new];
++    sd.inputWidth = inW;
++    sd.inputHeight = inH;
++    sd.outputWidth = outW;
++    sd.outputHeight = outH;
++    sd.colorTextureFormat = MTLPixelFormatBGRA8Unorm;
++    sd.outputTextureFormat = MTLPixelFormatBGRA8Unorm;
++    sd.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;
++    g_scaler = [sd newSpatialScalerWithDevice:g_mtlDevice];
++    if (g_scaler == nil) {
++      fail("MTLFXSpatialScaler creation failed");
++      return false;
++    }
++    if (!make_shared(g_in, inW, inH, g_scaler.colorTextureUsage, wgpu::TextureUsage::CopyDst, "MetalFX input", why) ||
++        !make_shared(g_out, outW, outH, g_scaler.outputTextureUsage, wgpu::TextureUsage::TextureBinding, "MetalFX output",
++                     why)) {
++      fail(why);
++      return false;
++    }
++  } else {
++    fail("needs iOS 16 / macOS 13");
++    return false;
++  }
++  if (!g_sampler) {
++    wgpu::SamplerDescriptor sd;
++    sd.label = "MetalFX output sampler";
++    sd.addressModeU = sd.addressModeV = sd.addressModeW = wgpu::AddressMode::ClampToEdge;
++    sd.magFilter = sd.minFilter = wgpu::FilterMode::Linear;
++    g_sampler = g_device.CreateSampler(&sd);
++  }
++  g_outSampled = TextureWithSampler{
++      .texture = g_out.texture,
++      .view = g_out.texture.CreateView(),
++      .size = {outW, outH, 1},
++      .format = kFormat,
++      .sampler = g_sampler,
++  };
++  char buf[96];
++  std::snprintf(buf, sizeof(buf), "active %ux%u -> %ux%u", inW, inH, outW, outH);
++  set_status(buf);
++  return true;
++}
++
++// Dawn's fences at the end of an access, as MTLSharedEvent waits for our command buffer.
++bool export_waits(const wgpu::SharedTextureMemoryEndAccessState& state, std::vector<Wait>& out) {
++  for (size_t i = 0; i < state.fenceCount; i++) {
++    wgpu::SharedFenceMTLSharedEventExportInfo mtlInfo;
++    wgpu::SharedFenceExportInfo info;
++    info.nextInChain = &mtlInfo;
++    state.fences[i].ExportInfo(&info);
++    if (mtlInfo.sharedEvent == nullptr) return false;
++    out.push_back({(__bridge id<MTLSharedEvent>)mtlInfo.sharedEvent, state.signaledValues[i]});
++  }
++  return true;
++}
++
++} // namespace
++
++void set_interop_supported(bool supported) noexcept { g_interop.store(supported); }
++
++const TextureWithSampler* upscale(const Viewport& viewport, bool frameSubmitted) {
++  if (!g_enabled.load(std::memory_order_relaxed)) {
++    if (g_scaler != nil) release_all();
++    if (!g_broken) set_status("off");
++    return nullptr;
++  }
++  if (g_broken) return nullptr;
++  if (!available(nullptr)) {
++    set_status("unavailable");
++    return nullptr;
++  }
++  const auto& src = present_source();
++  const uint32_t outW = extent(viewport.width);
++  const uint32_t outH = extent(viewport.height);
++  if (!frameSubmitted) {
++    set_status("idle: late submission (AURORA_LATE_SUBMIT)");
++    return nullptr;
++  }
++  if (src.size.width >= outW && src.size.height >= outH) {
++    set_status("idle: the frame is not smaller than the screen");
++    return nullptr;
++  }
++  if (src.format != kFormat) {
++    fail("the frame format is not BGRA8Unorm");
++    return nullptr;
++  }
++  if (!ensure(src.size.width, src.size.height, outW, outH)) return nullptr;
++
++  // 1. present source -> input (after MetalFX's previous read of it)
++  wgpu::SharedTextureMemoryBeginAccessDescriptor inBegin;
++  inBegin.concurrentRead = false;
++  inBegin.initialized = false;  // overwritten completely
++  if (g_eventValue > 0) {
++    inBegin.fenceCount = 1;
++    inBegin.fences = &g_eventFence;
++    inBegin.signaledValues = &g_eventValue;
++  }
++  if (g_in.memory.BeginAccess(g_in.texture, &inBegin) != wgpu::Status::Success) {
++    fail("BeginAccess on the input failed");
++    return nullptr;
++  }
++  {
++    const wgpu::CommandEncoderDescriptor encDesc{.label = "MetalFX input copy"};
++    auto enc = g_device.CreateCommandEncoder(&encDesc);
++    const wgpu::TexelCopyTextureInfo from{.texture = src.texture};
++    const wgpu::TexelCopyTextureInfo to{.texture = g_in.texture};
++    const wgpu::Extent3D size{src.size.width, src.size.height, 1};
++    enc.CopyTextureToTexture(&from, &to, &size);
++    const wgpu::CommandBufferDescriptor bufDesc{.label = "MetalFX input copy"};
++    const auto buf = enc.Finish(&bufDesc);
++    g_queue.Submit(1, &buf);
++  }
++  std::vector<Wait> waits;
++  {
++    wgpu::SharedTextureMemoryEndAccessState inEnd;
++    if (g_in.memory.EndAccess(g_in.texture, &inEnd) != wgpu::Status::Success || !export_waits(inEnd, waits)) {
++      fail("EndAccess / fence export on the input failed");
++      return nullptr;
++    }
++  }
++
++  // 2. MetalFX on our queue, after Dawn's copy and Dawn's last read of the output
++  if (@available(iOS 16.0, macOS 13.0, *)) {
++    id<MTLCommandBuffer> cb = [g_mtlQueue commandBuffer];
++    cb.label = @"MetalFX upscale";
++    for (const auto& w : waits) [cb encodeWaitForEvent:w.event value:w.value];
++    for (const auto& w : g_outWaits) [cb encodeWaitForEvent:w.event value:w.value];
++    g_outWaits.clear();
++    g_scaler.colorTexture = g_in.mtl;
++    g_scaler.outputTexture = g_out.mtl;
++    g_scaler.inputContentWidth = src.size.width;
++    g_scaler.inputContentHeight = src.size.height;
++    [g_scaler encodeToCommandBuffer:cb];
++    [cb encodeSignalEvent:g_event value:++g_eventValue];
++    [cb commit];
++  }
++
++  // 3. Dawn reads the output once MetalFX has written it
++  wgpu::SharedTextureMemoryBeginAccessDescriptor outBegin;
++  outBegin.concurrentRead = false;
++  outBegin.initialized = true;
++  outBegin.fenceCount = 1;
++  outBegin.fences = &g_eventFence;
++  outBegin.signaledValues = &g_eventValue;
++  if (g_out.memory.BeginAccess(g_out.texture, &outBegin) != wgpu::Status::Success) {
++    fail("BeginAccess on the output failed");
++    return nullptr;
++  }
++  g_outInAccess = true;
++  return &g_outSampled;
++}
++
++void after_present_submit() {
++  if (!g_outInAccess) return;
++  g_outInAccess = false;
++  wgpu::SharedTextureMemoryEndAccessState state;
++  if (g_out.memory.EndAccess(g_out.texture, &state) != wgpu::Status::Success || !export_waits(state, g_outWaits))
++    fail("EndAccess / fence export on the output failed");
++}
++
++void shutdown() {
++  release_all();
++  g_eventFence = {};
++  g_event = nil;
++  g_mtlQueue = nil;
++  g_sampler = {};
++}
++
++} // namespace aurora::webgpu::metalfx
++
++extern "C" void aurora_set_metalfx(bool enabled) { aurora::webgpu::metalfx::g_enabled.store(enabled); }
++
++extern "C" bool aurora_metalfx_available(void) { return aurora::webgpu::metalfx::available(nullptr); }
++
++extern "C" const char* aurora_metalfx_status(void) {
++  thread_local std::string copy;
++  {
++    std::lock_guard lk(aurora::webgpu::metalfx::g_statusMutex);
++    copy = aurora::webgpu::metalfx::g_status;
++    if (aurora::webgpu::metalfx::g_available == 0) copy = "unavailable: " + aurora::webgpu::metalfx::g_unavailableWhy;
++  }
++  return copy.c_str();
++}

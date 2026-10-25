@@ -360,6 +360,7 @@ struct MobileSettings {
     int resolution = 0;         // 0 Native, 1 2106x1084, 2 1920x1080, 3 1600x900, 4 1280x720
     int aspect = 0;             // 0 device, 1 1.943:1, 2 16:9, 3 4:3
     int scaling = 0;            // 0 Fit (bars around the image), 1 Stretch
+    int upscaling = 0;          // 0 Off (bilinear present), 1 MetalFX spatial upscaling (Aurora 0240)
     int uiSize = 1;             // 0 Small, 1 Default, 2 Large
     bool touchControls = true;  // on-screen GameCube controller (hidden anyway while a controller is connected)
     int touchOpacity = 65;      // percent, 20..100

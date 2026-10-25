@@ -28,6 +28,13 @@ bool handleEvent(const SDL_Event& ev);
 // Host thread, inside the frame after the F1 menu: draws the controller and the FPS readout, and
 // writes the periodic [perf] line into the log.
 void draw();
+// Host loop timing for the [perf] lines (main.cpp): call frameBegin() at the top of a game-loop
+// iteration and phase(i) when step i ends: 0 frame pacing wait, 1 aurora_begin_frame (frame slot,
+// drawable), 2 the game / interpolation replay, 3 menus and touch controls, 4 aurora_end_frame.
+// The slowest frame of each 10 s window is logged with its steps.
+void frameBegin();
+void phase(int step);
+
 // App lifecycle (SDL's background/foreground events): saves settings and flushes the log.
 void onBackground();
 void onForeground();
@@ -44,6 +51,9 @@ bool fitScaling();         // Screen Scaling = Fit
 float uiMultiplier();      // UI Size: 0.85 / 1 / 1.2
 // Applies Resolution (render height) and the frame rate now; called when a row changes.
 void applyDisplay();
+// The refresh rate the panel is held at (60 or 120; frame.cpp reports it to the frame pacer
+// instead of the panel's maximum). 0 = not held (PC).
+float displayRateLock();
 
 // F1 > iPhone tab. Returns true when a setting changed (saved at once).
 bool drawSettingsTab();

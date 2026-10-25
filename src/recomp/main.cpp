@@ -516,10 +516,13 @@ int main(int argc, char* argv[]) {
         }
         // (Phases name the step in a hang report: issue #11.)
         port::setPhase("game loop: frame pacing wait");
+        mobile::frameBegin();  // phone [perf] step timing (src/mobile)
         pacing::beforeFrame();
+        mobile::phase(0);
         interp::hostMark(0);
         port::setPhase("game loop: aurora_begin_frame (frame slot, staging buffer)");
         if (!aurora_begin_frame()) continue;
+        mobile::phase(1);
         lastPresented = SteadyClock::now();
         if (presentStallReported) log("[hang] frames are presented again");
         presentStallReported = false;
@@ -529,15 +532,18 @@ int main(int argc, char* argv[]) {
         port::setPhase(frame::interpolating() ? "game loop: replaying a game frame" : "game loop: running the game (lockstep)");
         const bool running = frame::hostFrame();
         pacing::afterReplay();
+        mobile::phase(2);
         interp::hostMark(2);
         port::setPhase("game loop: F1 menu / overlays");
         menu::draw();
         mobile::draw();  // on-screen controller (over the menu's windows), phone [perf] lines
         precache::frame();
+        mobile::phase(3);
         port::setPhase("game loop: present hold");
         pacing::beforeEnd();
         port::setPhase("game loop: aurora_end_frame (GX FIFO drain, hand-off to the render worker)");
         aurora_end_frame();
+        mobile::phase(4);
         port::setPhase("game loop");
         pacing::afterFrame();
         interp::hostMark(3);

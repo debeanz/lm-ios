@@ -1,6 +1,7 @@
 // Shader/pipeline precaching: see precache.h and docs/RENDERING.md ("Pipeline precache").
 #include "recomp/precache.h"
 
+#include "mobile/mobile.h"
 #include "port/install.h"
 #include "recomp/enhanced_lighting.h"
 #include "recomp/gx_bridge.h"
@@ -47,6 +48,11 @@ std::filesystem::path exeDir() {
 void configure() {
     // LM_PIPELINE_THREADS=<n>: pipeline compile threads (default: half the hardware threads, 1..8).
     if (const char* t = std::getenv("LM_PIPELINE_THREADS")) aurora_pipeline_cache_set_threads(uint32_t(std::atoi(t)));
+    // Phone (src/mobile): half of a 6-core iPhone (3 threads) took 130 s for the first start's
+    // 3,000 shaders; all cores but one while "Preparing shaders" holds the game (the threads are
+    // idle in play once the shaders are built).
+    else if (mobile::enabled())
+        aurora_pipeline_cache_set_threads(std::max(2u, std::thread::hardware_concurrency() - 1));
     // LM_CRASH_AT=<seconds> (test aid, crash journal): abort() that long after startup, a real crash
     // as far as the crash handler and the pipeline crash journal can tell (Aurora 0231).
     if (const char* c = std::getenv("LM_CRASH_AT")) {

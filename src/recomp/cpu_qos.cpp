@@ -23,6 +23,9 @@
 #include <intrin.h>
 #define LM_CPU_X86 1
 #endif
+#elif defined(__APPLE__)
+#include <pthread.h>
+#include <pthread/qos.h>
 #endif
 
 namespace recomp::cpu {
@@ -188,6 +191,16 @@ void setCurrent(Role role) {
         log("[cpu] %s thread: priority %s%s, power throttling %s%s", kRoleName[int(role)],
             prio == THREAD_PRIORITY_HIGHEST ? "highest" : "above normal", prioOk ? "" : " (failed)", qosOk ? "off" : "unchanged",
             sets ? (setOk ? (sSets == 2 ? ", efficiency cores" : ", performance cores") : ", CPU set failed") : "");
+#elif defined(__APPLE__)
+    // iPhone / iPad (docs/IOS.md): Apple chips have performance and efficiency cores too, and a
+    // thread at the default QoS may be scheduled on the efficiency cores (the game thread at about
+    // a third of its speed: fast-forward at 2x instead of 30x, hitches in play). Every role here is
+    // time-critical: user-interactive, the class of the UI thread itself.
+    if (!sEnabled) return;
+    const int err = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+    static std::atomic<unsigned> sLogged{0};
+    if (!(sLogged.fetch_or(1u << unsigned(role)) & (1u << unsigned(role))))
+        log("[cpu] %s thread: QoS user-interactive%s", kRoleName[int(role)], err ? " (failed)" : "");
 #endif
 }
 
