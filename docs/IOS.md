@@ -149,8 +149,11 @@ writes the session log on a PC too.
 
 ## Status
 
-Written on Windows without a Mac: the iOS target, the platform code (`native_ios.mm`, the Apple
-branches in `crash_handler.cpp` / `install.cpp` / `precache.cpp`) and the workflow have not been
-compiled yet; the first runs of the workflow will show what still needs fixing (Aurora's local
-patches on Metal/iOS in particular). Not yet: the European Hidden Mansion overlay on iOS, both
-releases in one IPA.
+Builds on GitHub Actions (first successful run 5, 2026-10-25: Xcode 26.3, a 14 MB IPA with a 50 MB
+arm64 executable). Fixes the first runs needed: Objective-C++ enabled on Apple, libc++'s
+experimental switch for `std::jthread`, a const path iterator in the updater, and library lookups
+restricted to the iPhone SDK (the runner's Homebrew macOS libpng/zstd were picked up otherwise).
+
+Not yet run on a device: start-up, Metal rendering with Aurora's local patches, touch input and
+performance are unverified; the session log is the first place to look. Not yet: the European
+Hidden Mansion overlay on iOS, both releases in one IPA.
