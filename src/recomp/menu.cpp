@@ -2282,9 +2282,12 @@ void drawEyeIcon(ImDrawList* dl, ImVec2 c, float s, ImU32 col, bool crossed) {
 void drawPhoneMenu(bool& open) {
     namespace col = phone::color;
     ImGuiIO& io = ImGui::GetIO();
-    // The controller moves the menu's own selection (menu_phone.cpp beginFrame); ImGui's gamepad
-    // navigation never reached the rows in the scrolling list on the device and is kept out.
-    io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+    // The controller moves the menu's own selection (menu_phone.cpp beginFrame). The flag must stay
+    // on: ImGui's SDL3 backend feeds the controller's buttons only while it is set (build 14 turned
+    // it off and the D-pad, A, B, L1 and R1 all stopped reaching the menu). ImGui's own navigation
+    // (which never reached the rows of the scrolling list) is kept out of the menu's windows with
+    // ImGuiWindowFlags_NoNavInputs.
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     phone::beginFrame();
     const float s = recomp::ui::scale();
     const float fs = ImGui::GetFontSize();
@@ -2304,7 +2307,7 @@ void drawPhoneMenu(bool& open) {
     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
-                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNavInputs;
     if (ImGui::Begin(kPhoneMenuWindow, nullptr, flags)) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
@@ -2319,7 +2322,8 @@ void drawPhoneMenu(bool& open) {
         ImGui::SetCursorScreenPos(ImVec2(wp.x + std::round(8.0f * s), wp.y));
         const float fpsW = port::settings().enhancements.showFps ? std::round(fs * 4.4f) : 0.0f;  // header FPS counter
         ImGui::BeginChild("##tabs", ImVec2(ws.x - 2 * iconW - std::round(8.0f * s) - fpsW, headerH), ImGuiChildFlags_None,
-                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground |
+                              ImGuiWindowFlags_NoNavInputs);
         {
             ImDrawList* tdl = ImGui::GetWindowDrawList();
             const float size = std::round(fs * 0.84f), tracking = size * 0.1f;
@@ -2408,7 +2412,7 @@ void drawPhoneMenu(bool& open) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(std::round(fs * 0.6f), std::round(fs * 0.3f)));
         ImGui::BeginChild("##page", ImVec2(listW, wp.y + ws.y - bodyY - hair),
                           ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
-                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoNavInputs);
         if (sPhoneTabChanged) ImGui::SetScrollY(0.0f);
         ImVec2 drag, start;
         const ImRect pageRect(ImGui::GetWindowPos(), ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(),
@@ -2471,7 +2475,8 @@ void drawPhoneMenu(bool& open) {
         }
 
         // Controller: L1 / R1 sections, B closes (not while a popup is open), Y hides the panel.
-        const bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        const bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) ||
+                           phone::dropdownOpen();
         if (!ImGui::IsAnyItemActive() && !popup) {
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) selectPhoneTab(sPhoneTab - 1);
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) selectPhoneTab(sPhoneTab + 1);

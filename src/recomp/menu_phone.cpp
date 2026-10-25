@@ -56,7 +56,6 @@ ImGuiID sClaimedId = 0;        // the slider the finger is dragging
 int sTickStep = -1;            // the step the haptic tick last fired at while dragging
 
 // --- dropdown ------------------------------------------------------------------------------------
-const ImGuiID kDropPopup = ImHashStr("##phone_dropdown");
 ImGuiID sDropId = 0;               // the choice row whose list is open
 std::vector<std::string> sDropItems;
 int sDropCurrent = 0, sDropFocus = 0;
@@ -64,7 +63,9 @@ ImRect sDropAnchor;
 ImGuiID sDropResultId = 0;
 int sDropResult = -1;
 bool sDropOpenedNow = false;
-bool sDropWasOpen = false;
+bool sDropKeys = false;      // the list was moved with the controller (show its focus)
+float sDropScroll = 0.0f;
+bool sSwallowTap = false;    // a tap closed the list: the rows ignore it until the finger lifts
 
 // A row changed a value this frame (menu.cpp marks the settings for saving: some pages save only
 // on ImGui's "edited and released", which these rows do not report).
@@ -101,6 +102,9 @@ bool hiddenNow() {
     sLastRowId = 0;
     return true;
 }
+
+// While the choice list is open (and for the tap that closed it) the rows below take no taps.
+bool blocked() { return sDropId != 0 || sSwallowTap; }
 
 // Phone rows are full width: one placed with SameLine() after another starts its own line instead.
 void ownLine() {
@@ -245,7 +249,8 @@ bool checkbox(const char* labelText, bool* v) {
     const float h = rowHeight();
     const std::string title = visible(labelText);
     ImGui::PushID(labelText);
-    bool pressed = ImGui::InvisibleButton("##row", ImVec2(ImGui::GetContentRegionAvail().x, h), ImGuiButtonFlags_PressedOnClickRelease);
+    bool pressed = ImGui::InvisibleButton("##row", ImVec2(ImGui::GetContentRegionAvail().x, h), ImGuiButtonFlags_PressedOnClickRelease) &&
+                   !blocked();
     ImGui::PopID();
     const ImRect rect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     const bool focused = registerRow(title, pressed);
@@ -272,7 +277,8 @@ bool combo(const char* labelText, int* current, const char* const items[], int c
     const float h = rowHeight();
     const std::string title = visible(labelText);
     ImGui::PushID(labelText);
-    const bool pressed = ImGui::InvisibleButton("##row", ImVec2(ImGui::GetContentRegionAvail().x, h), ImGuiButtonFlags_PressedOnClickRelease);
+    const bool pressed = ImGui::InvisibleButton("##row", ImVec2(ImGui::GetContentRegionAvail().x, h), ImGuiButtonFlags_PressedOnClickRelease) &&
+                         !blocked();
     const ImGuiID id = ImGui::GetItemID();
     ImGui::PopID();
     const ImRect rect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
@@ -292,7 +298,7 @@ bool combo(const char* labelText, int* current, const char* const items[], int c
         sDropId = id;
         sDropCurrent = sDropFocus = idx;
         sDropOpenedNow = true;
-        ImGui::OpenPopup(kDropPopup);
+        sDropKeys = sController;
         tick();
     }
     if (const int side = takeSide(focused); side != 0) {
@@ -336,7 +342,8 @@ bool button(const char* labelText) {
     const float h = rowHeight();
     const std::string title = visible(labelText);
     ImGui::PushID(labelText);
-    bool pressed = ImGui::InvisibleButton("##button", ImVec2(ImGui::GetContentRegionAvail().x, h), ImGuiButtonFlags_PressedOnClickRelease);
+    bool pressed = ImGui::InvisibleButton("##button", ImVec2(ImGui::GetContentRegionAvail().x, h), ImGuiButtonFlags_PressedOnClickRelease) &&
+                   !blocked();
     ImGui::PopID();
     const ImRect rect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     const bool focused = registerRow(title, pressed);
@@ -360,11 +367,12 @@ bool sliderRow(const char* labelText, float& t, const char* valueText, bool notD
     const float lineH = rowHeight(), h = std::round(fs() * 3.6f);
     const std::string title = visible(labelText);
     ImGui::PushID(labelText);
-    const bool tapped = ImGui::InvisibleButton("##slider", ImVec2(ImGui::GetContentRegionAvail().x, h), ImGuiButtonFlags_PressedOnClickRelease);
+    const bool tapped = ImGui::InvisibleButton("##slider", ImVec2(ImGui::GetContentRegionAvail().x, h), ImGuiButtonFlags_PressedOnClickRelease) &&
+                        !blocked();
     ImGui::PopID();
     const ImRect rect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     const ImGuiID id = ImGui::GetItemID();
-    const bool active = ImGui::IsItemActive();
+    const bool active = ImGui::IsItemActive() && !blocked();
     const ImGuiIO& io = ImGui::GetIO();
     const bool pointer = io.MousePos.x > -1e6f;
     if (active) {
@@ -573,6 +581,7 @@ void beginFrame() {
     sNextIntro.clear();
     sOverride = false;
 
+    if (sSwallowTap && !ImGui::GetIO().MouseDown[0] && !ImGui::GetIO().MouseReleased[0]) sSwallowTap = false;
     sLastRowCount = sRowCount;
     sRowCount = 0;
     sLastRowId = 0;
@@ -584,7 +593,7 @@ void beginFrame() {
     // Controller: up / down between rows (with repeat), A, left / right. Not while a list or another
     // popup is open (the list reads them itself, drawDropdown).
     const bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
-    if (popup || sLastRowCount == 0) return;
+    if (popup || sDropId != 0 || sLastRowCount == 0) return;
     const auto pressed = [](ImGuiKey a, ImGuiKey b) { return ImGui::IsKeyPressed(a, true) || ImGui::IsKeyPressed(b, true); };
     int move = 0;
     if (pressed(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown)) move = 1;
@@ -614,85 +623,98 @@ void endPage() { sInPage = false; }
 
 void drawDropdown(const ImRect& bounds) {
     if (sDropId == 0) return;
+    // Drawn over everything (the foreground list) and driven by hand: an ImGui popup opened from
+    // the list's child window never showed on the device (build 14).
+    const ImGuiIO& io = ImGui::GetIO();
     const float itemH = std::round(fs() * 2.3f), pad = std::round(fs() * 0.35f);
+    const int n = int(sDropItems.size());
     float w = 0;
     for (const auto& s : sDropItems) w = std::max(w, ImGui::CalcTextSize(s.c_str()).x);
     w = std::clamp(w + padX() * 2 + fs() * 1.4f, sDropAnchor.GetWidth() * 0.45f, sDropAnchor.GetWidth());
-    const float full = float(sDropItems.size()) * itemH + 2 * pad;
+    const float full = float(n) * itemH + 2 * pad;
     // Under the row, right-aligned with it; above it when there is more room there.
     const float below = bounds.Max.y - sDropAnchor.Max.y - pad, above = sDropAnchor.Min.y - bounds.Min.y - pad;
     const bool down = below >= std::min(full, fs() * 8.0f) || below >= above;
     const float h = std::min(full, std::max(down ? below : above, itemH * 2.5f));
     const float x = sDropAnchor.Max.x - w, y = down ? sDropAnchor.Max.y + pad * 0.6f : sDropAnchor.Min.y - pad * 0.6f - h;
-    ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, std::round(fs() * 0.5f));
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImGui::ColorConvertU32ToFloat4(color::rgba(28, 26, 44, 250)));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImGui::ColorConvertU32ToFloat4(color::kBorder));
-    const bool open = ImGui::BeginPopupEx(kDropPopup, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
-                                                          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav);
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar(3);
-    if (!open) {  // closed by a tap outside it
-        sDropId = 0;
-        sDropWasOpen = false;
-        return;
-    }
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const int n = int(sDropItems.size());
-    int chosen = -1;
+    const ImRect box(ImVec2(x, y), ImVec2(x + w, y + h));
+    const float maxScroll = std::max(0.0f, full - h);
+    const auto keepVisible = [&](int i) {
+        const float top = pad + float(i) * itemH;
+        if (top < sDropScroll + pad) sDropScroll = top - pad;
+        if (top + itemH > sDropScroll + h - pad) sDropScroll = top + itemH - h + pad;
+        sDropScroll = std::clamp(sDropScroll, 0.0f, maxScroll);
+    };
     if (sDropOpenedNow) {
-        ImGui::SetScrollY(std::max(0.0f, float(sDropCurrent) * itemH - h * 0.4f));
-    } else {
+        sDropScroll = 0;
+        keepVisible(sDropCurrent);
+    }
+
+    int chosen = -1;
+    bool close = false;
+    if (!sDropOpenedNow) {
         // Controller: up / down, A picks, B closes without a change.
         int move = 0;
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown, true) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown, true)) move = 1;
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp, true) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp, true)) move = -1;
         if (move) {
             sDropFocus = std::clamp(sDropFocus + move, 0, n - 1);
+            sDropKeys = true;
+            keepVisible(sDropFocus);
             tick();
-            const float top = float(sDropFocus) * itemH;
-            if (top < ImGui::GetScrollY()) ImGui::SetScrollY(top);
-            if (top + itemH > ImGui::GetScrollY() + h - 2 * pad) ImGui::SetScrollY(top + itemH - (h - 2 * pad));
         }
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) chosen = sDropFocus;
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) ImGui::CloseCurrentPopup();
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) close = true;
+        // Touch: a swipe inside the list scrolls it; a tap on a value picks it; a tap anywhere else
+        // closes the list (and goes nowhere else: sSwallowTap until the finger lifts).
+        ImVec2 drag, start;
+        if (mobile::touch::scrollFor(box, drag, start)) sDropScroll = std::clamp(sDropScroll - drag.y, 0.0f, maxScroll);
+        if (io.MouseClicked[0] && !box.Contains(io.MouseClickedPos[0])) {
+            close = true;
+            sSwallowTap = true;
+        }
+        if (io.MouseReleased[0] && ImGui::IsMousePosValid(&io.MousePos) && box.Contains(io.MouseClickedPos[0]) &&
+            box.Contains(io.MousePos)) {
+            const int i = int((io.MouseClickedPos[0].y - box.Min.y - pad + sDropScroll) / itemH);
+            const int j = int((io.MousePos.y - box.Min.y - pad + sDropScroll) / itemH);
+            if (i == j && i >= 0 && i < n) chosen = i;
+        }
     }
+
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    const float rr = std::round(fs() * 0.5f);
+    dl->AddRectFilled(ImVec2(box.Min.x, box.Min.y + fs() * 0.25f), ImVec2(box.Max.x, box.Max.y + fs() * 0.25f), color::rgba(0, 0, 0, 90), rr);
+    dl->AddRectFilled(box.Min, box.Max, color::rgba(28, 26, 44, 252), rr);
+    dl->AddRect(box.Min, box.Max, color::kBorder, rr, 0, hair());
+    dl->PushClipRect(ImVec2(box.Min.x + hair(), box.Min.y + hair()), ImVec2(box.Max.x - hair(), box.Max.y - hair()), true);
+    const bool fingerDown = io.MouseDown[0] && box.Contains(io.MouseClickedPos[0]) && ImGui::IsMousePosValid(&io.MousePos);
     for (int i = 0; i < n; i++) {
-        ImGui::PushID(i);
-        if (ImGui::InvisibleButton("##opt", ImVec2(ImGui::GetContentRegionAvail().x, itemH), ImGuiButtonFlags_PressedOnClickRelease))
-            chosen = i;
-        ImGui::PopID();
-        const ImRect r(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
-        const bool cur = i == sDropCurrent, foc = i == sDropFocus && sController, held = ImGui::IsItemActive();
-        const float rr = std::round(fs() * 0.35f);
-        if (held || foc) dl->AddRectFilled(r.Min, r.Max, held ? color::kRowPressed : color::kRowSelected, rr);
-        if (foc) dl->AddRect(r.Min, r.Max, color::kAccent, rr, 0, hair());
-        const ImVec2 ts = ImGui::CalcTextSize(sDropItems[size_t(i)].c_str());
-        dl->AddText(ImVec2(r.Min.x + padX(), r.Min.y + (itemH - ts.y) * 0.5f), cur ? color::kAccent : color::kText,
-                    sDropItems[size_t(i)].c_str());
+        const ImRect r(ImVec2(box.Min.x + pad, box.Min.y + pad + float(i) * itemH - sDropScroll),
+                       ImVec2(box.Max.x - pad, box.Min.y + pad + float(i + 1) * itemH - sDropScroll));
+        if (r.Max.y < box.Min.y || r.Min.y > box.Max.y) continue;
+        const bool cur = i == sDropCurrent, foc = i == sDropFocus && sDropKeys, held = fingerDown && r.Contains(io.MousePos);
+        const float ir = std::round(fs() * 0.35f);
+        if (held || foc) dl->AddRectFilled(r.Min, r.Max, held ? color::kRowPressed : color::kRowSelected, ir);
+        if (foc) dl->AddRect(r.Min, r.Max, color::kAccent, ir, 0, hair());
+        const char* text = sDropItems[size_t(i)].c_str();
+        const ImVec2 ts = ImGui::CalcTextSize(text);
+        dl->AddText(ImVec2(r.Min.x + padX(), r.Min.y + (itemH - ts.y) * 0.5f), cur ? color::kAccent : color::kText, text);
         if (cur) {  // a check mark on the current value
             const float c = fs() * 0.28f, cx = r.Max.x - padX() - c, cy = r.GetCenter().y;
             const ImVec2 p[3] = {ImVec2(cx - c, cy), ImVec2(cx - c * 0.3f, cy + c * 0.7f), ImVec2(cx + c, cy - c * 0.7f)};
             dl->AddPolyline(p, 3, color::kAccent, 0, std::max(1.5f, fs() * 0.12f));
         }
     }
-    ImVec2 drag, start;
-    const ImRect area(ImGui::GetWindowPos(), ImVec2(ImGui::GetWindowPos().x + w, ImGui::GetWindowPos().y + h));
-    if (mobile::touch::scrollFor(area, drag, start)) ImGui::SetScrollY(ImGui::GetScrollY() - drag.y);
+    dl->PopClipRect();
+
+    sDropOpenedNow = false;
     if (chosen >= 0) {
         sDropResultId = sDropId;
         sDropResult = chosen;
         tick();
-        ImGui::CloseCurrentPopup();
+        close = true;
     }
-    const bool stillOpen = ImGui::IsPopupOpen(kDropPopup, ImGuiPopupFlags_None);
-    ImGui::EndPopup();
-    sDropOpenedNow = false;
-    sDropWasOpen = true;
-    if (!stillOpen || chosen >= 0) sDropId = 0;
+    if (close) sDropId = 0;
 }
 
 bool dropdownOpen() { return sDropId != 0; }

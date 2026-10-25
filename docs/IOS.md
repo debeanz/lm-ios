@@ -111,7 +111,7 @@ src/recomp/menu_phone.cpp), modelled closely on Dusk's menu, in the "Mansion nig
   selected row has a thin gold outline; a gold dot (drawn, the font has no bullet) marks a value
   changed from its default (read from a default-constructed `port::Settings`, or
   `phone::setNextDefault` for phone first-start defaults). On/Off rows flip with a tap. Choice rows
-  open a dropdown list under the row (an ImGui popup, `phone::drawDropdown`): tap a value, or D-pad
+  open a dropdown list under the row (drawn on the foreground list and driven by hand, `phone::drawDropdown`: an ImGui popup opened from the list's child window never showed on the device): tap a value, or D-pad
   and A; B or a tap outside closes it. Sliders have a track with a moon-white knob in a gold ring;
   a sideways drag (or a tap on the track) moves it, a value bubble rides above the knob while it is
   held and each step ticks the Taptic Engine; a swipe up or down scrolls the list instead.
@@ -124,7 +124,7 @@ src/recomp/menu_phone.cpp), modelled closely on Dusk's menu, in the "Mansion nig
   Controls shows its three parts one under the other; the developer Debug tools are not shown.
 - On the right: the selected option's name, description (the PC tooltip) and default.
 - Controller: the menu moves its own selection (`phone::beginFrame`; ImGui's gamepad navigation
-  never reached the rows of the scrolling list on the device and is off): D-pad / stick between
+  never reached the rows of the scrolling list on the device; it is kept out of the menu's windows with `ImGuiWindowFlags_NoNavInputs`, while `ImGuiConfigFlags_NavEnableGamepad` stays on because ImGui's SDL3 backend feeds the controller's buttons only with it): D-pad / stick between
   rows, left/right change the value, A toggles or opens the list, L1/R1 change section (starting at
   its first row), B closes, Y hides the panel; the View (Select) button opens and closes the menu.
   The press that closes the menu does not reach the game (`menu::swallowPadAfterClose`).
