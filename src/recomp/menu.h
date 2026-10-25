@@ -28,6 +28,13 @@ bool SmallButton(const char* label);
 bool Combo(const char* label, int* current, const char* const items[], int count, int popupMaxHeight = -1);
 bool Combo(const char* label, int* current, const char* zeroSeparatedItems, int popupMaxHeight = -1);
 void SeparatorText(const char* label);
+// ImGui::TextDisabled for the menu's explanations: the same on a PC; on a phone a page's
+// introduction goes to the description column and later ones become small wrapped captions.
+void Note(const char* fmt, ...)
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((format(printf, 1, 2)))
+#endif
+    ;
 void ItemTooltip(const char* fmt, ...)
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((format(printf, 1, 2)))

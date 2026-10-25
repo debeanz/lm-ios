@@ -316,7 +316,7 @@ void galleryWindow() {
         ImGui::TextUnformatted(it.title);
         if (it.note) {
             ImGui::SameLine();
-            ImGui::TextDisabled("%s", it.note);
+            recomp::menu::Note("%s", it.note);
         }
         if (it.tex) {
             // Checkerboard-free dark backdrop so white and transparent parts both show.
@@ -324,9 +324,9 @@ void galleryWindow() {
             const ImVec2 sz(float(it.w) * sZoom, float(it.h) * sZoom);
             ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), IM_COL32(40, 44, 56, 255));
             ImGui::Image(it.tex, sz);
-            ImGui::TextDisabled("%dx%d  %s%s%s", it.w, it.h, it.disc, it.inner ? " : " : "", it.inner ? it.inner : "");
+            recomp::menu::Note("%dx%d  %s%s%s", it.w, it.h, it.disc, it.inner ? " : " : "", it.inner ? it.inner : "");
         } else {
-            ImGui::TextDisabled("(not on this disc)");
+            recomp::menu::Note("(not on this disc)");
         }
     }
     ImGui::End();

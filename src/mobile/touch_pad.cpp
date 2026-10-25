@@ -645,9 +645,13 @@ void mouseUp() {
     sMouseScrolling = false;
 }
 
+// With the touch controls switched off and no controller, the menu button alone stays (the only
+// way into the menu). With a controller connected it is hidden too: its View button opens the menu.
+bool menuButtonOnly() { return !sVisible && !sPadConnected; }
+
 bool begin(SDL_FingerID f, ImVec2 p) {
     sIgnoreUntilUp.erase(std::remove(sIgnoreUntilUp.begin(), sIgnoreUntilUp.end(), f), sIgnoreUntilUp.end());
-    if (sVisible) {
+    if (sVisible || menuButtonOnly()) {
         const bool menuOpen = recomp::menu::isOpen();
         int found = -1;
         // Buttons before sticks (sticks and the floating zone are the largest targets).
@@ -656,6 +660,7 @@ bool begin(SDL_FingerID f, ImVec2 p) {
                 const Control& c = sCtl[i];
                 if (c.owned || (pass == 0) == (c.kind == Kind::Stick)) continue;
                 if (menuOpen) continue;  // the menu has its own "Back to game" button
+                if (!sVisible && !c.menu) continue;
                 if (hit(c, p, true)) {
                     found = int(i);
                     break;
@@ -1083,8 +1088,7 @@ void draw() {
     }
     const bool menuOpen = recomp::menu::isOpen();
     sFeeding = sVisible && !menuOpen;
-    // Without the on-screen controls (controller connected, or switched off) a phone still needs a
-    // way into the F1 menu: the menu button stays.
+    // Touch controls switched off and no controller: the menu button stays (menuButtonOnly).
     const float a = std::clamp(float(ms().touchOpacity) / 100.0f, 0.1f, 1.0f);
     const float dt = ImGui::GetIO().DeltaTime;
     ImDrawList* dl = ImGui::GetForegroundDrawList();
@@ -1093,7 +1097,7 @@ void draw() {
         c.anim = c.pressed ? std::min(1.0f, c.anim + dt * 18.0f) : std::max(0.0f, c.anim - dt * 9.0f);
         if (c.ripple >= 0.0f) c.ripple = c.ripple + dt > kRippleSeconds ? -1.0f : c.ripple + dt;
         if (menuOpen) continue;  // hidden under the menu (its "Back to game" button closes it)
-        if (!sVisible && !c.menu) continue;
+        if (!sVisible && !(c.menu && menuButtonOnly())) continue;
         const float alpha = c.menu && !sVisible ? std::max(a, 0.85f) : a;
         switch (c.kind) {
         case Kind::Round: paintRound(dl, c, alpha); break;

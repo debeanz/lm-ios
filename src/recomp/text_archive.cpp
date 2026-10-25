@@ -453,14 +453,14 @@ void textArchiveWindow() {
     }
     static float sScale = 0.6f;
     recomp::menu::SliderFloat("Text size", &sScale, 0.3f, 1.0f, "%.2f");
-    if (sScanNext <= kMaxEvent) ImGui::TextDisabled("Reading event archives... %d / %d", sScanNext, kMaxEvent);
+    if (sScanNext <= kMaxEvent) recomp::menu::Note("Reading event archives... %d / %d", sScanNext, kMaxEvent);
     static const char* sEnvTab = std::getenv("LM_TEXT_ARCHIVE");
     auto tabFlags = [&](const char* name) {
         return sEnvTab && !std::strcmp(sEnvTab, name) ? ImGuiTabItemFlags_SetSelected : 0;
     };
     if (ImGui::BeginTabBar("textarchive")) {
         if (ImGui::BeginTabItem("Unused lines", nullptr, tabFlags("lines"))) {
-            ImGui::TextDisabled("Messages that no <SPEAK> or <CHOICE> of their event script refers to (never shown).");
+            recomp::menu::Note("Messages that no <SPEAK> or <CHOICE> of their event script refers to (never shown).");
             ImGui::BeginChild("lines");
             for (const EventFile& e : sEvents)
                 for (size_t i = 0; i < e.messages.size(); i++) {
@@ -468,7 +468,7 @@ void textArchiveWindow() {
                     ImGui::Text("event%02d  message %zu", e.no, i);
                     if (e.no == 3 && i == 12) {
                         ImGui::SameLine();
-                        ImGui::TextDisabled("(the pianist's tune quiz - the tune is Totaka's Song)");
+                        recomp::menu::Note("(the pianist's tune quiz - the tune is Totaka's Song)");
                     }
                     showGameText(e.messages[i], sScale);
                     if (e.no == 26 && i < std::size(kEvent26English) && kEvent26English[i]) ImGui::TextWrapped("%s", kEvent26English[i]);
@@ -502,7 +502,7 @@ void textArchiveWindow() {
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Developer notes", nullptr, tabFlags("notes"))) {
-            ImGui::TextDisabled("Japanese notes the developers left in the event scripts (skipped by the interpreter).\n"
+            recomp::menu::Note("Japanese notes the developers left in the event scripts (skipped by the interpreter).\n"
                                 "Drawn with the game font, which only has 64 kanji: missing ones are left blank.");
             ImGui::BeginChild("notes");
             for (const EventFile& e : sEvents) {

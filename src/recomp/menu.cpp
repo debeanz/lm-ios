@@ -383,11 +383,15 @@ bool combo(const char* label, E& value, const char* const* names, int count) {
 
 // "(note)" after the last item, or wrapped on the next line when it would be cut off.
 void pending(const char* what) {
+    if (mobile::enabled()) {  // phone: in the option's description, not under the row
+        phone::itemNote(what);
+        return;
+    }
     char text[256];
     std::snprintf(text, sizeof(text), "(%s)", what);
     ImGui::SameLine();
     if (ImGui::CalcTextSize(text).x <= ImGui::GetContentRegionAvail().x) {
-        ImGui::TextDisabled("%s", text);
+        recomp::menu::Note("%s", text);
         return;
     }
     ImGui::NewLine();
@@ -431,7 +435,7 @@ void releaseNotes(const port::update::Info& info) {
         default: ImGui::TextWrapped("%s", l.text.c_str()); break;
         }
     }
-    if (info.lines.empty()) ImGui::TextDisabled("(no release notes)");
+    if (info.lines.empty()) recomp::menu::Note("(no release notes)");
     ImGui::EndChild();
 }
 
@@ -460,26 +464,26 @@ void updatesSection() {
                        (st.phase == up::Phase::Failed && !st.info.tag.empty());
     if (st.phase == up::Phase::Checking) {
         ImGui::SameLine();
-        ImGui::TextDisabled("checking...");
+        recomp::menu::Note("checking...");
     } else if (st.phase == up::Phase::UpToDate) {
         ImGui::SameLine();
-        ImGui::TextDisabled("%s", st.message.c_str());
+        recomp::menu::Note("%s", st.message.c_str());
     } else if (st.phase == up::Phase::CheckFailed) {
         ImGui::TextWrapped("%s", st.message.c_str());
     }
     if (!offer) return;
     if (!st.manual && u.skipVersion == st.info.tag) {
-        ImGui::TextDisabled("Version %s is available; you chose to skip it ('Check for updates' shows it again).",
+        recomp::menu::Note("Version %s is available; you chose to skip it ('Check for updates' shows it again).",
                             st.info.tag.c_str());
         return;
     }
     if (up::dismissed() && st.phase == up::Phase::Available) {
-        ImGui::TextDisabled("Update available: %s (Later; 'Check for updates' shows it again).", st.info.tag.c_str());
+        recomp::menu::Note("Update available: %s (Later; 'Check for updates' shows it again).", st.info.tag.c_str());
         return;
     }
     ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.45f, 1.0f), "Update available: %s", st.info.tag.c_str());
     ImGui::SameLine();
-    ImGui::TextDisabled("%s%s%s", st.info.title.c_str(), st.info.published.empty() ? "" : ", ", st.info.published.c_str());
+    recomp::menu::Note("%s%s%s", st.info.title.c_str(), st.info.published.empty() ? "" : ", ", st.info.published.c_str());
     releaseNotes(st.info);
     const bool canInstall = st.packaged && st.installWritable && !st.info.assetName.empty();
     switch (st.phase) {
@@ -508,7 +512,7 @@ void updatesSection() {
         if (recomp::menu::Button("Later")) up::later();
         if (ImGui::BeginPopupModal("Install update?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("Install %s and restart now?", st.info.tag.c_str());
-            ImGui::TextDisabled("Unsaved game progress is lost.");
+            recomp::menu::Note("Unsaved game progress is lost.");
             if (recomp::menu::Button("Install and restart##confirm")) {
                 if (sDirty) {
                     port::saveSettings();
@@ -576,7 +580,7 @@ void updateToast() {
                                         ImGuiWindowFlags_NoMove;
     if (ImGui::Begin("##update_toast", nullptr, kFlags)) {
         ImGui::Text("Update available: %s", st.info.tag.c_str());
-        ImGui::TextDisabled("F1 > Game to see what's new");
+        recomp::menu::Note("F1 > Game to see what's new");
     }
     ImGui::End();
     ImGui::PopStyleVar();
@@ -625,8 +629,8 @@ void refreshRateToast() {
                                         ImGuiWindowFlags_NoMove;
     if (ImGui::Begin("##refresh_toast", nullptr, kFlags)) {
         ImGui::Text("Running at %.0f fps: %d fps doesn't divide the screen's %.0f Hz evenly.", sFit, sTarget, sHz);
-        ImGui::TextDisabled("For %d fps, set Refresh rate to %d Hz in the Quick Access menu (Performance),", sTarget, sTarget);
-        ImGui::TextDisabled("or pick %.0f fps / \"Match display refresh rate\" in F1 > Visuals.", sHz);
+        recomp::menu::Note("For %d fps, set Refresh rate to %d Hz in the Quick Access menu (Performance),", sTarget, sTarget);
+        recomp::menu::Note("or pick %.0f fps / \"Match display refresh rate\" in F1 > Visuals.", sHz);
     }
     ImGui::End();
     ImGui::PopStyleVar();
@@ -687,8 +691,8 @@ void dataSection() {
         const bool p = popup[0] == 'M' && popup[1] == 'a';
         ImGui::Text("%s", p ? "Move the data into the portable folder and restart?"
                             : "Move the data back to the system folder and restart?");
-        ImGui::TextDisabled("Save your game first: the game restarts and unsaved progress is lost.");
-        ImGui::TextDisabled("The data is copied and checked first; if anything fails, nothing is changed.");
+        recomp::menu::Note("Save your game first: the game restarts and unsaved progress is lost.");
+        recomp::menu::Note("The data is copied and checked first; if anything fails, nothing is changed.");
         if (recomp::menu::Button(p ? "Move and restart##portable" : "Move and restart##system")) {
             port::saveSettings();  // the copy must hold the current settings
             sDirty = false;
@@ -723,13 +727,13 @@ void gameTab() {
                            "there and restart the app.");
     } else if (inst.staticBuild) {
         ImGui::Text("Developer build: %s, recompiled at build time.", port::versionName(inst.running));
-        ImGui::TextDisabled("LuigisMansionRecomp manages discs and versions (docs/SETUP.md).");
+        recomp::menu::Note("LuigisMansionRecomp manages discs and versions (docs/SETUP.md).");
     } else {
         auto row = [](const char* label, const std::string& path, bool ready) {
             ImGui::Text("%s:", label);
             ImGui::SameLine();
             if (ready) ImGui::TextWrapped("%s", path.c_str());
-            else ImGui::TextDisabled("not installed");
+            else recomp::menu::Note("not installed");
         };
         row("USA disc", inst.usDisc, inst.usReady);
         row("Europe disc", inst.palDisc, inst.palReady);
@@ -742,7 +746,7 @@ void gameTab() {
             ImGui::SameLine();
             changed |= ImGui::RadioButton("Europe", &base, int(port::GameVersion::PAL));
             ImGui::SameLine();
-            ImGui::TextDisabled("(?)");
+            recomp::menu::Note("(?)");
             recomp::menu::ItemTooltip("Which installed disc's game runs (both are installed). Takes a restart.");
             if (changed) {
                 inst.base = port::GameVersion(base);
@@ -778,7 +782,7 @@ void gameTab() {
                               "its own (changed in the game's Options).");
     }
     if (port::palBaseFeature() == port::Avail::Yes)
-        ImGui::TextDisabled("Used for a new save; an existing save keeps its language (in-game Options).");
+        recomp::menu::Note("Used for a new save; an existing save keeps its language (in-game Options).");
     if (phone) return;  // portable data folder and the PC updater do not apply on a phone
     dataSection();
     updatesSection();
@@ -789,8 +793,8 @@ void gameTab() {
 // and roughly what it costs.
 void renderingTab() {
     const bool phone = mobile::enabled();
-    ImGui::TextDisabled("Hardware-accurate rendering. Everything is on by default for the best quality;");
-    ImGui::TextDisabled(phone ? "turn features off for more speed, less heat and longer battery life."
+    recomp::menu::Note("Hardware-accurate rendering. Everything is on by default for the best quality;");
+    recomp::menu::Note(phone ? "turn features off for more speed, less heat and longer battery life."
                               : "turn features off only if your PC needs the speed.");
     auto& r = port::settings().rendering;
     recomp::menu::SeparatorText("Color and depth");
@@ -1014,8 +1018,8 @@ void ghostLightsSection() {
 // into Lights / Shadows / Flashlight / Effects.
 void enhancedLightingTab() {
     auto& l = port::settings().enhancedLighting;
-    ImGui::TextDisabled("Optional effects on top of the accurate rendering. Off by default: the original");
-    ImGui::TextDisabled("look is one click away. Each part can be switched and tuned on its own.");
+    recomp::menu::Note("Optional effects on top of the accurate rendering. Off by default: the original");
+    recomp::menu::Note("look is one click away. Each part can be switched and tuned on its own.");
     ImGui::Separator();
     sDirty |= recomp::menu::Checkbox("Enhanced lighting", &l.enabled);
     recomp::menu::ItemTooltip(
@@ -1276,10 +1280,10 @@ void frameRateControls(port::VideoSettings& v) {
     const bool reduced = fit > 0 && float(target) <= hz + 0.5f && fit < float(target) - 0.5f;
     if (v.matchDisplay && hz > 0) {
         ImGui::SameLine();
-        ImGui::TextDisabled("(%.0f Hz)", hz);
+        recomp::menu::Note("(%.0f Hz)", hz);
     } else if (vsync && hz > 0 && float(target) > hz + 0.5f) {
         ImGui::SameLine();
-        ImGui::TextDisabled("(VSync limits this to %.0f fps)", hz);
+        recomp::menu::Note("(VSync limits this to %.0f fps)", hz);
     } else if (reduced) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.4f, 1.0f), "(shown at %.0f fps on this %.0f Hz screen)", fit, hz);
@@ -1326,7 +1330,7 @@ void frameRateControls(port::VideoSettings& v) {
                           recomp::pacing::vrrActive() ? " (detected)" : " (not detected so far)");
     if (const char* st = recomp::pacing::status(); st && *st) {
         ImGui::SameLine();
-        ImGui::TextDisabled("now %s", st);
+        recomp::menu::Note("now %s", st);
     }
 }
 
@@ -1622,8 +1626,8 @@ void soundTab() {
             "6 / 8 channels (else falls back to 5.1 or matrix-encoded stereo).");
     {
         const int dev = recomp::audio::outDeviceChannels();
-        if (dev > 0) ImGui::TextDisabled("Device: %d channels. Playing: %s", dev, recomp::audio::outStatus());
-        else ImGui::TextDisabled("Playing: %s", recomp::audio::outStatus());
+        if (dev > 0) recomp::menu::Note("Device: %d channels. Playing: %s", dev, recomp::audio::outStatus());
+        else recomp::menu::Note("Playing: %s", recomp::audio::outStatus());
     }
     sDirty |= recomp::menu::Checkbox("Swap left/right", &a.swapChannels);
     recomp::menu::ItemTooltip("Exchanges the left and right channels (e.g. for headphones worn the other way round).");
@@ -1645,7 +1649,7 @@ void soundTab() {
 // default (ctrl+click a slider to type a value).
 void gameplaySection() {
     auto& g = port::settings().gameplay;
-    ImGui::TextDisabled("Neutral by default: the original game is unchanged until you move something.");
+    recomp::menu::Note("Neutral by default: the original game is unchanged until you move something.");
     recomp::menu::SeparatorText("Lighting");
     sDirty |= recomp::menu::Checkbox("Hidden Mansion darkness everywhere", &g.palDarknessEverywhere);
     recomp::menu::ItemTooltip("Room ambient light x0.2 in every mansion, as in the European Hidden Mansion.");
@@ -1730,7 +1734,7 @@ void generalEnhancementsTab() {
                                   "\"(USA)\" is the %s release's, \"(PAL)\" the %s release's\n"
                                   "(harder, mirrored, darker). The save file keeps the answer for that visit.",
                                   usGame ? "original USA" : "USA", usGame ? "European" : "original European");
-            if (inside) ImGui::TextDisabled("This visit: %s", kVariants[pal ? 1 : 0]);
+            if (inside) recomp::menu::Note("This visit: %s", kVariants[pal ? 1 : 0]);
         } else {
             ImGui::BeginDisabled(inside);
             if (ImGui::BeginCombo("Hidden Mansion version", kVariants[pal ? 1 : 0])) {
@@ -1743,7 +1747,7 @@ void generalEnhancementsTab() {
                     }
                     if (const char* note = port::availNote(avail[i])) {
                         ImGui::SameLine();
-                        ImGui::TextDisabled("(%s)", note);
+                        recomp::menu::Note("(%s)", note);
                     }
                 }
                 ImGui::EndCombo();
@@ -1764,7 +1768,7 @@ void generalEnhancementsTab() {
 void unusedContentTab() {
     using recomp::unused2::UnusedGroup;
     auto& e = port::settings().enhancements;
-    ImGui::TextDisabled("Content left unused in the retail game. Everything here is off by default.");
+    recomp::menu::Note("Content left unused in the retail game. Everything here is off by default.");
     // Checkbox + tooltip + "(note)" after it (the tooltip belongs to the checkbox, not the note).
     auto item = [&](const char* label, bool& v, const char* tip, const char* note) {
         sDirty |= recomp::menu::Checkbox(label, &v);
@@ -1885,7 +1889,7 @@ void debugTab() {
 
 // Silly options (off by default): Luigi (silly.cpp), then ghosts, mansion, voice and treasure (silly_world.cpp).
 void sillyTab() {
-    ImGui::TextDisabled("Just for fun. Every option off = the original game.");
+    recomp::menu::Note("Just for fun. Every option off = the original game.");
     recomp::silly::drawLuigiOptions();
     recomp::silly::drawWorldOptions();  // ghosts, mansion, Luigi's voice, treasure (silly_world.cpp)
 }
@@ -1916,6 +1920,8 @@ void enhancementsTab() {
     }
 }
 
+float sShownFps = 0.0f;  // the FPS counter's value (the phone menu's header shows it while open)
+
 void fpsOverlay() {
     using clock = std::chrono::steady_clock;
     static auto last = clock::now();
@@ -1939,6 +1945,8 @@ void fpsOverlay() {
         last = now;
     }
     float insetL = 0, insetT = 0, insetR = 0, insetB = 0;  // phone: clear of the camera housing
+    sShownFps = fps;
+    if (mobile::enabled() && sOpen) return;  // phone: shown in the menu's header (drawPhoneMenu) instead
     if (mobile::enabled()) {
         // Phone: the menu's moonlit look. A dark violet pill with a lavender edge, the rate in the
         // accent gold (coral while well below the target) and "FPS" in small lavender capitals; the
@@ -1977,7 +1985,7 @@ void fpsOverlay() {
                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
     ImGui::Text("%.0f fps", fps);
     // Interpolated presentation: how it is paced, and why it is below the target if it is.
-    if (const char* st = recomp::pacing::status(); st && *st) ImGui::TextDisabled("%s", st);
+    if (const char* st = recomp::pacing::status(); st && *st) recomp::menu::Note("%s", st);
     ImGui::End();
 }
 
@@ -2117,13 +2125,25 @@ void ItemTooltip(const char* fmt, ...) {
     else ImGui::SetItemTooltipV(fmt, args);
     va_end(args);
 }
+void Note(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    if (mobile::enabled()) {
+        char buf[2048];
+        std::vsnprintf(buf, sizeof(buf), fmt, args);
+        phone::note(buf);
+    } else {
+        ImGui::TextDisabledV(fmt, args);
+    }
+    va_end(args);
+}
 bool Button(const char* label) {
-    const bool pressed = ImGui::Button(label);
+    const bool pressed = mobile::enabled() ? phone::button(label) : ImGui::Button(label);
     click::afterItem(label);
     return pressed;
 }
 bool SmallButton(const char* label) {
-    const bool pressed = ImGui::SmallButton(label);
+    const bool pressed = mobile::enabled() ? phone::button(label) : ImGui::SmallButton(label);
     click::afterItem(label);
     return pressed;
 }
@@ -2224,13 +2244,13 @@ void drawPhoneTab(int i) {
         sillyTab();
         recomp::menu::SeparatorText("Unused content");
         unusedContentTab();
-        recomp::menu::SeparatorText("Debug");
-        debugTab();
+        // (The developer Debug tools, warps and viewers, are left out on the phone: tables and tree
+        // views made for a mouse, of no use to a player.)
         break;
     case 8:
         gameTab();
         recomp::menu::SeparatorText("Reset");
-        if (ImGui::Button("Restore all defaults", ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight() * 1.5f)))
+        if (recomp::menu::Button("Restore all defaults"))
             ImGui::OpenPopup("Restore defaults?");
         recomp::menu::ItemTooltip("Every setting in this menu (including controller bindings) goes back to its first-install "
                                   "default. Save files are not touched.");
@@ -2262,7 +2282,9 @@ void drawEyeIcon(ImDrawList* dl, ImVec2 c, float s, ImU32 col, bool crossed) {
 void drawPhoneMenu(bool& open) {
     namespace col = phone::color;
     ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    // The controller moves the menu's own selection (menu_phone.cpp beginFrame); ImGui's gamepad
+    // navigation never reached the rows in the scrolling list on the device and is kept out.
+    io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
     phone::beginFrame();
     const float s = recomp::ui::scale();
     const float fs = ImGui::GetFontSize();
@@ -2295,11 +2317,21 @@ void drawPhoneMenu(bool& open) {
         // Tabs: tracked capitals, the open one white with a gold underline. They fit across a phone
         // in landscape; on a narrower screen the strip scrolls sideways.
         ImGui::SetCursorScreenPos(ImVec2(wp.x + std::round(8.0f * s), wp.y));
-        ImGui::BeginChild("##tabs", ImVec2(ws.x - 2 * iconW - std::round(8.0f * s), headerH), ImGuiChildFlags_None,
+        const float fpsW = port::settings().enhancements.showFps ? std::round(fs * 4.4f) : 0.0f;  // header FPS counter
+        ImGui::BeginChild("##tabs", ImVec2(ws.x - 2 * iconW - std::round(8.0f * s) - fpsW, headerH), ImGuiChildFlags_None,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
         {
             ImDrawList* tdl = ImGui::GetWindowDrawList();
-            const float size = std::round(fs * 0.86f), tracking = size * 0.11f, padX = std::round(fs * 0.95f);
+            const float size = std::round(fs * 0.84f), tracking = size * 0.1f;
+            // Every tab across the strip when it fits: the space around the labels shrinks to make
+            // room (down to a minimum; past that the strip scrolls).
+            float labels = 0;
+            for (int i = 0; i < kPhoneTabCount; i++) {
+                std::string label = kPhoneTabs[i];
+                for (char& ch : label) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+                labels += phone::trackedWidth(size, label.c_str(), tracking);
+            }
+            const float padX = std::round(std::clamp((ImGui::GetWindowWidth() - labels) / (2.0f * kPhoneTabCount) - 0.5f, fs * 0.4f, fs * 0.95f));
             for (int i = 0; i < kPhoneTabCount; i++) {
                 if (i) ImGui::SameLine(0, 0);
                 std::string label = kPhoneTabs[i];
@@ -2346,6 +2378,18 @@ void drawPhoneMenu(bool& open) {
             drawIcon(c, ImGui::IsItemActive() ? col::kAccent : col::kText);
             return pressed;
         };
+        if (port::settings().enhancements.showFps) {
+            // Show FPS: while the menu covers the corner, the counter sits in its header.
+            char num[16];
+            std::snprintf(num, sizeof(num), "%.0f", sShownFps);
+            const float size = std::round(fs * 0.84f);
+            const float lw = phone::trackedWidth(size, "FPS", size * 0.1f);
+            const ImVec2 ns = ImGui::CalcTextSize(num);
+            const float x = wp.x + ws.x - 2 * iconW - lw - ns.x - std::round(fs * 0.9f);
+            dl->AddText(ImVec2(x, wp.y + (headerH - ns.y) * 0.5f), col::kAccent, num);
+            phone::trackedText(dl, ImVec2(x + ns.x + std::round(fs * 0.3f), wp.y + (headerH - size) * 0.5f + fs * 0.06f), size,
+                               col::kHeading, "FPS", size * 0.1f);
+        }
         if (iconButton("##eye", wp.x + ws.x - 2 * iconW,
                        [&](ImVec2 c, ImU32 ic) { drawEyeIcon(dl, c, fs * 0.62f, ic, sPhoneHidden); }))
             sPhoneHidden = !sPhoneHidden;
@@ -2362,8 +2406,6 @@ void drawPhoneMenu(bool& open) {
         ImGui::SetCursorScreenPos(ImVec2(wp.x, bodyY));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(std::round(fs * 1.0f), std::round(fs * 0.6f)));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(std::round(fs * 0.6f), std::round(fs * 0.3f)));
-        // Another section (L1 / R1): the controller starts again at its first row (menu_phone.cpp).
-        if (sPhoneTabChanged && !sPhoneJustOpened) ImGui::NavInitWindow(ImGui::GetCurrentWindow(), true);
         ImGui::BeginChild("##page", ImVec2(listW, wp.y + ws.y - bodyY - hair),
                           ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
@@ -2371,9 +2413,12 @@ void drawPhoneMenu(bool& open) {
         ImVec2 drag, start;
         const ImRect pageRect(ImGui::GetWindowPos(), ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(),
                                                             ImGui::GetWindowPos().y + ImGui::GetWindowHeight()));
-        if (mobile::touch::scrollFor(pageRect, drag, start)) ImGui::SetScrollY(ImGui::GetScrollY() - drag.y);
+        if (!phone::dropdownOpen() && mobile::touch::scrollFor(pageRect, drag, start)) ImGui::SetScrollY(ImGui::GetScrollY() - drag.y);
         ImGui::PushItemWidth(-1.0f);
+        phone::beginPage();
         drawPhoneTab(sPhoneTab);
+        phone::endPage();
+        if (phone::consumeChanged()) sDirty = true;  // saved when the menu closes (or the app leaves)
         ImGui::PopItemWidth();
         ImGui::Dummy(ImVec2(0, std::round(fs * 0.8f)));
         // A thin scroll position mark at the list's right edge while it scrolls (Dusk's thin bar).
@@ -2391,15 +2436,26 @@ void drawPhoneMenu(bool& open) {
         ImGui::PopStyleVar(2);
         dl->AddLine(ImVec2(wp.x + listW, bodyY), ImVec2(wp.x + listW, wp.y + ws.y), col::kLine, hair);
 
+        // Description column: the selected option's name, what it does, its default. With nothing
+        // selected: the page's introduction, or how the menu works.
         const float dx = wp.x + listW + std::round(fs * 1.4f), dr = wp.x + ws.x - std::round(fs * 1.4f);
-        ImGui::SetCursorScreenPos(ImVec2(dx, bodyY + std::round(fs * 1.1f)));
-        ImGui::PushTextWrapPos(dr);
+        float dy = bodyY + std::round(fs * 1.1f);
+        std::string title = phone::descriptionTitle();
+        for (char& ch : title) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+        if (!title.empty()) {
+            const float size = std::round(fs * 0.86f);
+            phone::trackedText(dl, ImVec2(dx, dy), size, col::kAccent, title.c_str(), size * 0.09f);
+            dy += std::round(size + fs * 0.75f);
+        }
+        ImGui::SetCursorScreenPos(ImVec2(dx, dy));
+        ImGui::PushTextWrapPos(dr - ImGui::GetWindowPos().x);  // (window-local, not screen x)
         const char* body = phone::descriptionText();
         const std::string def = phone::descriptionDefault();
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(col::kDescription));
-        if (!*phone::descriptionTitle() && !*body) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(col::kHeading));
-            ImGui::TextWrapped("Select an option to see what it does. Changes apply and save at once.");
+        if (title.empty() && !*body) {
+            const char* intro = phone::descriptionIntro();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(*intro ? col::kDescription : col::kHeading));
+            ImGui::TextWrapped("%s", *intro ? intro : "Select an option to see what it does. Changes apply and save at once.");
             ImGui::PopStyleColor();
         } else if (*body) {
             ImGui::TextWrapped("%s", body);
@@ -2421,7 +2477,9 @@ void drawPhoneMenu(bool& open) {
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) selectPhoneTab(sPhoneTab + 1);
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) && !sPhoneJustOpened) open = false;
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) sPhoneHidden = !sPhoneHidden;
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) && !popup) sPhoneHidden = !sPhoneHidden;
+        // The open choice list, over the page (after the checks above: its B closes only the list).
+        phone::drawDropdown(ImRect(ImVec2(wp.x, bodyY), ImVec2(wp.x + listW, wp.y + ws.y)));
     }
     ImGui::End();
     ImGui::PopStyleColor();
@@ -2433,7 +2491,7 @@ void drawPhoneMenu(bool& open) {
 void restoreDefaultsPopup() {
     if (ImGui::BeginPopupModal("Restore defaults?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Restore every setting to its default? This cannot be undone.");
-        ImGui::TextDisabled("A few options (marked in their descriptions) apply on the next start.");
+        recomp::menu::Note("A few options (marked in their descriptions) apply on the next start.");
         if (recomp::menu::Button("Restore defaults")) {
             port::resetSettingsToDefaults();
             // Settings applied only when their control changes: apply the defaults now too.
@@ -2600,7 +2658,7 @@ void draw() {
                               "first-install default. Save files are not touched.");
         if (ImGui::BeginPopupModal("Restore defaults?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("Restore every setting to its default? This cannot be undone.");
-            ImGui::TextDisabled("A few options (marked in their tooltips) apply on the next launch.");
+            recomp::menu::Note("A few options (marked in their tooltips) apply on the next launch.");
             if (recomp::menu::Button("Restore defaults")) {
                 port::resetSettingsToDefaults();
                 // Settings applied only when their control changes: apply the defaults now too.

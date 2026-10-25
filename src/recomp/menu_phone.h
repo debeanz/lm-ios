@@ -9,6 +9,7 @@
 
 struct ImDrawList;
 struct ImVec2;
+struct ImRect;
 
 namespace recomp::menu::phone {
 
@@ -36,6 +37,13 @@ bool combo(const char* label, int* current, const char* zeroSeparated);
 bool sliderFloat(const char* label, float* v, float min, float max, const char* format);
 bool sliderInt(const char* label, int* v, int min, int max, const char* format);
 void separatorText(const char* label);
+// recomp::menu::Button / SmallButton on the phone: a row with the label and a chevron.
+bool button(const char* label);
+// recomp::menu::Note (the PC's grey TextDisabled lines): a page's introduction (before its first
+// row) goes to the description column; later ones are small wrapped captions.
+void note(const char* text);
+// The menu's "(next launch)"-style status notes after an option: into that option's description.
+void itemNote(const char* text);
 // The tooltip of the last item: kept for the description column when that item is the selected one.
 void itemTooltip(const char* fmt, va_list args);
 // The default of the next row's value, when it is not the settings struct's own default (phone
@@ -46,11 +54,22 @@ void setNextDefault(double value);
 void trackedText(ImDrawList* dl, ImVec2 pos, float size, unsigned col, const char* text, float tracking);
 float trackedWidth(float size, const char* text, float tracking);
 
-// Once per frame before the menu is drawn: the description shown is last frame's.
+// Once per frame before the menu is drawn: the description shown is last frame's; reads the
+// controller (D-pad / stick between rows, A, left / right) for the rows drawn this frame.
 void beginFrame();
+// Around a page's options (notes before its first row are its introduction).
+void beginPage();
+void endPage();
+// The open choice list (a dropdown under its row, inside `bounds`): after the page, in the menu
+// window. Tap or D-pad + A picks, B or a tap outside closes it.
+void drawDropdown(const ImRect& bounds);
+bool dropdownOpen();
+// A row changed a setting since the last call (the menu then saves the settings).
+bool consumeChanged();
 const char* descriptionTitle();    // "" when none
 const char* descriptionText();     // "" when none
 const char* descriptionDefault();  // the selected row's default value, "" when unknown
+const char* descriptionIntro();    // the page's introduction (shown while nothing is selected)
 // Clears the selection (another tab or page opened).
 void clearSelection();
 // A slider is being dragged (this or the last frame): a moving finger stays on it instead of

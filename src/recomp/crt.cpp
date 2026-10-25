@@ -1032,7 +1032,7 @@ bool drawMenu() {
                           mobile::enabled() ? " MetalFX upscaling (Phone tab) pauses while it is on." : "");
     if (s.enabled && !aurora_postfx_active()) {
         ImGui::SameLine();
-        ImGui::TextDisabled("(shader failed to compile, see log)");
+        recomp::menu::Note("(shader failed to compile, see log)");
     }
     ImGui::BeginDisabled(!s.enabled);
     ImGui::Indent();

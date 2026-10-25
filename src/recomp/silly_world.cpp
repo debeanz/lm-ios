@@ -439,6 +439,7 @@ bool discoOn() { return cfg().disco; }
 }  // namespace recomp::sillyworld
 
 // ---- F1 > Enhancements > Silly ---------------------------------------------------------------
+#include "mobile/mobile.h"
 #include "recomp/menu.h"
 
 #include <imgui.h>
@@ -459,9 +460,14 @@ void drawWorldOptions() {
          "1.00x = original.");
     ImGui::BeginDisabled(s.ghostSize == 1.0f);
     ImGui::Indent();
-    save |= ImGui::RadioButton("All ghosts##swsize", &s.ghostSizeTargets, 0);
-    ImGui::SameLine();
-    save |= ImGui::RadioButton("Boos only##swsize", &s.ghostSizeTargets, 1);
+    if (mobile::enabled()) {  // phone: a choice row instead of two radio buttons
+        static const char* kTargets[] = {"All ghosts", "Boos only"};
+        save |= menu::Combo("Ghosts it applies to##swsize", &s.ghostSizeTargets, kTargets, 2);
+    } else {
+        save |= ImGui::RadioButton("All ghosts##swsize", &s.ghostSizeTargets, 0);
+        ImGui::SameLine();
+        save |= ImGui::RadioButton("Boos only##swsize", &s.ghostSizeTargets, 1);
+    }
     ImGui::Unindent();
     ImGui::EndDisabled();
     save |= menu::Checkbox("Ghost colour shuffle", &s.ghostColorShuffle);

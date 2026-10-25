@@ -1036,9 +1036,9 @@ bool portsTab() {
             } else if (pc.device == "keyboard") {
                 ImGui::TextUnformatted("Keyboard");
             } else if (pc.device == "none") {
-                ImGui::TextDisabled("Unplugged");
+                recomp::menu::Note("Unplugged");
             } else if (pc.device == "auto") {
-                ImGui::TextDisabled(st.keyboard ? "No controller (keyboard)" : "No controller");
+                recomp::menu::Note(st.keyboard ? "No controller (keyboard)" : "No controller");
             } else {
                 ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.3f, 1), "Waiting for %s",
                                    pc.deviceName.empty() ? "controller" : pc.deviceName.c_str());
@@ -1058,7 +1058,7 @@ bool portsTab() {
     }
     const auto& st = sPorts[sTestPort];
     if (!st.haveLast || st.last.err != PAD_ERR_NONE) {
-        ImGui::TextDisabled("Nothing connected (or the game has not read the controllers yet).");
+        recomp::menu::Note("Nothing connected (or the game has not read the controllers yet).");
     } else {
         const PADStatus& s = st.last;
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1102,9 +1102,9 @@ bool portsTab() {
             }
         }
         ImGui::Dummy(ImVec2(0, 2 * r + 26 * k));
-        ImGui::TextDisabled("buttons %04X  stick %d,%d  C %d,%d  L %u  R %u", s.button, s.stickX, s.stickY,
+        recomp::menu::Note("buttons %04X  stick %d,%d  C %d,%d  L %u  R %u", s.button, s.stickX, s.stickY,
                             s.substickX, s.substickY, s.triggerLeft, s.triggerRight);
-        if (!mobile::enabled()) ImGui::TextDisabled("Keyboard keys reach the game only while this menu does not have focus.");
+        if (!mobile::enabled()) recomp::menu::Note("Keyboard keys reach the game only while this menu does not have focus.");
     }
     return changed;
 }
@@ -1149,8 +1149,8 @@ void profilePicker(bool padsOnly) {
             (sPorts[i].pad.id && sPorts[i].pad.guid == sSelProfile))
             ports += (ports.empty() ? "" : ", ") + std::to_string(i + 1);
     ImGui::SameLine();
-    if (ports.empty()) ImGui::TextDisabled("(not on a port)");
-    else ImGui::TextDisabled("(port %s)", ports.c_str());
+    if (ports.empty()) recomp::menu::Note("(not on a port)");
+    else recomp::menu::Note("(port %s)", ports.c_str());
 }
 
 // Inputs bound to more than one GameCube input (L click + L analog on the same trigger is
@@ -1183,10 +1183,10 @@ bool bindingsTab() {
         return false;
     }
     if (phone)  // no Esc key or right mouse button on a phone
-        ImGui::TextDisabled("Tap a slot, then press a button or move a stick/trigger. Tap it again to cancel; "
+        recomp::menu::Note("Tap a slot, then press a button or move a stick/trigger. Tap it again to cancel; "
                             "hold it to clear.");
     else
-        ImGui::TextDisabled("Click a slot, then press a %s. Esc cancels, right-click clears.",
+        recomp::menu::Note("Click a slot, then press a %s. Esc cancels, right-click clears.",
                             prof->keyboard ? "key or mouse button" : "button or move a stick/trigger");
     const float secondsLeft =
         kCaptureSeconds - std::chrono::duration<float>(Clock::now() - sCap.start).count();
@@ -1277,7 +1277,7 @@ bool analogTab() {
     profilePicker(true);
     Profile* prof = findProfile(sSelProfile);
     if (!prof || prof->keyboard) {
-        ImGui::TextDisabled("No controller profile yet: connect a controller.");
+        recomp::menu::Note("No controller profile yet: connect a controller.");
         return false;
     }
     int port = -1;
@@ -1310,7 +1310,7 @@ bool analogTab() {
     recomp::menu::ItemTooltip("How far the analog L trigger must be pulled to press L (click).");
     pct("R click at", prof->threshold[1], 0.05f, 1.0f);
     recomp::menu::ItemTooltip("How far the analog R trigger must be pulled to press R (click).");
-    ImGui::TextDisabled("How far an analog trigger bound to L/R (click) must be pulled to press it.\n"
+    recomp::menu::Note("How far an analog trigger bound to L/R (click) must be pulled to press it.\n"
                         "Luigi's Mansion also reads the analog L/R values (Analog triggers bindings).");
     recomp::menu::SeparatorText("Rumble");
     changed |= recomp::menu::Checkbox("Rumble", &prof->rumble);
@@ -1322,7 +1322,7 @@ bool analogTab() {
     recomp::menu::ItemTooltip("%s", intensity ? "Vibration strength." : "This controller's rumble is only on or off.");
     if (!intensity) {
         ImGui::SameLine();
-        ImGui::TextDisabled("(on/off only)");
+        recomp::menu::Note("(on/off only)");
     }
     ImGui::BeginDisabled(port < 0 || !prof->rumble);
     if (recomp::menu::Button("Test rumble")) {
@@ -1342,7 +1342,7 @@ bool analogTab() {
             ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "The controller refused rumble: %s",
                                sMotor[port].error.c_str());
         else
-            ImGui::TextDisabled("Sent to the controller.");
+            recomp::menu::Note("Sent to the controller.");
     }
     ImGui::Separator();
     if (ImGui::Button("Reset sticks, triggers and rumble")) {
@@ -1488,7 +1488,16 @@ bool drawTab() {
     }
     bool changed = std::exchange(sUnsaved, false);
     bool local = false;
-    if (ImGui::BeginTabBar("controls")) {
+    if (mobile::enabled()) {
+        // Phone: the three parts one under the other (a second row of tabs inside the page was
+        // cluttered); the menu's own section tabs stay the only tabs.
+        recomp::menu::SeparatorText("Controller");
+        local |= portsTab();
+        recomp::menu::SeparatorText("Buttons");
+        local |= bindingsTab();
+        recomp::menu::SeparatorText("Sticks, triggers and rumble");
+        local |= analogTab();
+    } else if (ImGui::BeginTabBar("controls")) {
         if (ImGui::BeginTabItem("Ports", nullptr, subTabFlags("Ports"))) {
             local |= portsTab();
             ImGui::EndTabItem();

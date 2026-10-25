@@ -269,10 +269,10 @@ void soundSection() {
     if (ui::target() >= 0) ImGui::SetScrollHereY(0.0f);  // LM_JUKEBOX_UI: the section in view
     std::call_once(sLoad, load);
     if (sTracks.empty()) {
-        ImGui::TextDisabled("No music table found on the disc.");
+        recomp::menu::Note("No music table found on the disc.");
         return;
     }
-    ImGui::TextDisabled("Plays the game's sequenced music (the mansion's streamed ambience is separate).\n"
+    recomp::menu::Note("Plays the game's sequenced music (the mansion's streamed ambience is separate).\n"
                         "The game may change the music again on its own, e.g. when Luigi enters a room.");
     if (recomp::menu::Button("Stop music")) {
         sStop = true;
@@ -310,8 +310,8 @@ void soundSection() {
             ImGui::Text("%2d  %s", t.index, t.name.c_str());
             ImGui::TableNextColumn();
             // Total.com (17) is 32 bytes: tempo, one rest, end. Nothing to hear (a "silence" cue).
-            if (t.size && t.size <= 0x20) ImGui::TextDisabled("empty (no notes)");
-            else if (t.aliasOf >= 0) ImGui::TextDisabled("same as %d", t.aliasOf);
+            if (t.size && t.size <= 0x20) recomp::menu::Note("empty (no notes)");
+            else if (t.aliasOf >= 0) recomp::menu::Note("same as %d", t.aliasOf);
             else if (unused) ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "not heard in retail");
         }
         ImGui::EndTable();

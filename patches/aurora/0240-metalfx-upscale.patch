@@ -181,7 +181,7 @@ new file mode 100644
 index 0000000..8a3456a
 --- /dev/null
 +++ b/lib/webgpu/metalfx.mm
-@@ -0,0 +1,457 @@
+@@ -0,0 +1,467 @@
 +// MetalFX spatial upscaling of the present source (include/aurora/metalfx.h). Compiled with ARC.
 +//
 +// Two IOSurfaces are shared between Dawn and our own Metal command queue:
@@ -346,7 +346,17 @@ index 0000000..8a3456a
 +        }
 +      });
 +  g_instance.WaitAny(future, UINT64_MAX);
-+  if (!ok && !g_broken) fail(std::string(what) + ": " + message);
++  if (!ok) {
++    // Always logged with Dawn's own message (a failure noted just before, e.g. "BeginAccess on the
++    // input failed", says what failed; this says why).
++    Log.warn("MetalFX: Dawn error while {}: {}", what, message);
++    if (!g_broken) {
++      fail(std::string(what) + ": " + message);
++    } else {
++      std::lock_guard lk(g_statusMutex);
++      g_status += " (" + message + ")";
++    }
++  }
 +  return ok;
 +}
 +

@@ -463,7 +463,7 @@ void helpMarker(const char* text) { recomp::menu::ItemTooltip("%s", text); }
 // One table of maps with "Go" buttons; `unusedOnly` limits it to the maps normal play never loads.
 void mapTable(const char* id, bool unusedOnly) {
     const bool inGame = sStatus.inGame;
-    if (!inGame) ImGui::TextDisabled("Warps are available while playing (load a save or start a new game).");
+    if (!inGame) recomp::menu::Note("Warps are available while playing (load a save or start a new game).");
     ImGui::BeginDisabled(!inGame);
     int n = 0;
     const MapInfo* m = maps(&n);
@@ -494,7 +494,7 @@ void mapTable(const char* id, bool unusedOnly) {
         ImGui::EndTable();
     }
     ImGui::EndDisabled();
-    if (sWarpMap.load() >= 0) ImGui::TextDisabled("Warp queued (applied when no transition, event or menu is active)...");
+    if (sWarpMap.load() >= 0) recomp::menu::Note("Warp queued (applied when no transition, event or menu is active)...");
 }
 
 }  // namespace
@@ -509,11 +509,11 @@ void unusedSection() {
     mapTable("unusedmaps", true);
 
     recomp::menu::SeparatorText("Unused rooms");
-    ImGui::TextDisabled("Leftover room models. Go warps to the retail room and shows the old model\n"
+    recomp::menu::Note("Leftover room models. Go warps to the retail room and shows the old model\n"
                         "for that visit only.");
     // Its hooks (Luigi's start position for the visited room) are written against the USA code.
     const bool roomsHere = !ver::pal();
-    if (!roomsHere) ImGui::TextDisabled("(%s)", port::availNote(port::Avail::NotYet));
+    if (!roomsHere) recomp::menu::Note("(%s)", port::availNote(port::Avail::NotYet));
     ImGui::BeginDisabled(!sStatus.inGame || !roomsHere);
     int nr = 0;
     const rooms::LeftoverRoom* lr = rooms::list(&nr);
@@ -535,7 +535,7 @@ void unusedSection() {
 
 void debugSection() {
     auto& e = port::settings().enhancements;
-    ImGui::TextDisabled("Debug features left in the retail game, plus port-side viewers. All off by default.");
+    recomp::menu::Note("Debug features left in the retail game, plus port-side viewers. All off by default.");
     recomp::menu::SeparatorText("Overlays and viewers");
     if (recomp::menu::Checkbox("Particle manager report (JUTReport)", &e.dbgParticleReport)) port::saveSettings();
     helpMarker("Emitter / particle / child counts and per-group usage printed by the game's particle\n"

@@ -36,7 +36,7 @@ void tip(const char* text) {
 }
 void note(const char* text) {
     ImGui::SameLine();
-    ImGui::TextDisabled("(%s)", text);
+    recomp::menu::Note("(%s)", text);
 }
 }  // namespace
 
@@ -213,7 +213,7 @@ void unusedSection(UnusedGroup group) {
 void gameplaySection() {
     auto& u = port::settings().unused2;
     recomp::menu::SeparatorText("Unfinished Luigi states");
-    ImGui::TextDisabled("Restored from code left in the game. All off by default.");
+    recomp::menu::Note("Restored from code left in the game. All off by default.");
     sDirty |= recomp::menu::Checkbox("Poison mushrooms poison Luigi", &u.poisonState);
     tip("Touching a poison mushroom no longer shrinks Luigi. Instead he plays the unused poisoned\n"
         "animation (doku_lp, with the dark \"poisoned\" eyes), stands still and loses health slowly.\n"

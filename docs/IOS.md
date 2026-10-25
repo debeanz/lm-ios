@@ -108,19 +108,32 @@ src/recomp/menu_phone.cpp), modelled closely on Dusk's menu, in the "Mansion nig
   Graphics, Rendering, Lighting, Sound, Controls, Gameplay (general + gameplay), Extras (Silly,
   Unused content, Debug), Game (disc, restore defaults). They fit across a phone in landscape.
 - Options on the left: plain rows, label in tracked capitals, value as text on the right; the
-  selected row has a thin gold outline; a dot marks a value changed from its default (read from a
-  default-constructed `port::Settings`, or `phone::setNextDefault` for phone first-start defaults).
-  A tap on a choice row steps to the next value; sliders change with a sideways drag on the row
-  (relative to where the finger went down) and show their position as a hairline along the row.
-  The menu's wrappers (`recomp::menu::Checkbox/Combo/SliderFloat/SliderInt/SeparatorText/
-  ItemTooltip`) switch to these on the phone, so every tab gets them.
-- On the right: the selected option's description (the PC tooltip) and its default.
-- Controller: D-pad / stick between rows, left/right change the value, A toggles, L1/R1 change
-  section (starting at its first row), B closes, Y hides the panel; the View (Select) button opens
-  and closes the menu. The option list is a NavFlattened child, so ImGui's navigation enters it; the
-  focused row owns left/right. The press that closes the menu does not reach the game
-  (`menu::swallowPadAfterClose`).
-- FPS counter (the number only) and the cutscene-skip screen use the same look.
+  selected row has a thin gold outline; a gold dot (drawn, the font has no bullet) marks a value
+  changed from its default (read from a default-constructed `port::Settings`, or
+  `phone::setNextDefault` for phone first-start defaults). On/Off rows flip with a tap. Choice rows
+  open a dropdown list under the row (an ImGui popup, `phone::drawDropdown`): tap a value, or D-pad
+  and A; B or a tap outside closes it. Sliders have a track with a moon-white knob in a gold ring;
+  a sideways drag (or a tap on the track) moves it, a value bubble rides above the knob while it is
+  held and each step ticks the Taptic Engine; a swipe up or down scrolls the list instead.
+  `recomp::menu::Button` rows end in a chevron. The menu's wrappers (`recomp::menu::Checkbox/Combo/
+  SliderFloat/SliderInt/SeparatorText/ItemTooltip/Button/Note`) switch to these on the phone.
+- Calmer pages: options that cannot be used right now (inside `BeginDisabled`: a master switch off,
+  the other release's features) are left out instead of greyed; a page's introduction (`Note` lines
+  before its first row) shows in the description column while nothing is selected, later notes are
+  small captions; "(next launch)"-style notes (`pending`) go into the option's description;
+  Controls shows its three parts one under the other; the developer Debug tools are not shown.
+- On the right: the selected option's name, description (the PC tooltip) and default.
+- Controller: the menu moves its own selection (`phone::beginFrame`; ImGui's gamepad navigation
+  never reached the rows of the scrolling list on the device and is off): D-pad / stick between
+  rows, left/right change the value, A toggles or opens the list, L1/R1 change section (starting at
+  its first row), B closes, Y hides the panel; the View (Select) button opens and closes the menu.
+  The press that closes the menu does not reach the game (`menu::swallowPadAfterClose`).
+- Any change made in a row marks the settings for saving (`phone::consumeChanged`): some pages
+  saved only on ImGui's "edited and released", which the phone rows do not report.
+- The touch menu button shows only with the touch controls (or alone when they are switched off
+  and no controller is connected); with a controller the View button opens the menu.
+- FPS counter (the number only; in the menu's header while it is open) and the cutscene-skip
+  screen use the same look.
 - The screen is never tied to the game's frames on a phone: the host always runs decoupled at
   `frame::hostFps()` (at least 60), so the menu, touch controls and overlays stay smooth at the
   30 FPS setting and while the game loads; at 30 FPS the recorded game frames are shown as they are

@@ -544,7 +544,7 @@ bool drawSettingsTab() {
                                       "and Apple's upscaler sharpens it to the full screen: a cleaner picture for less "
                                       "work. Not together with the CRT filter. Now: %s",
                                       now);
-            if (m.upscaling == 1) ImGui::TextDisabled("   MetalFX: %s", now);
+            // (The live status is in the description: "Now: ...".)
         }
     }
 
@@ -598,9 +598,9 @@ bool drawSettingsTab() {
     }
 
     recomp::menu::SeparatorText("This device");
-    ImGui::TextWrapped("%s, %s. %s.", native::deviceModel().c_str(), native::osVersion().c_str(), memorySummary().c_str());
-    if (const char* pad = touch::physicalController()) ImGui::TextWrapped("Controller: %s (touch controls hidden).", pad);
-    ImGui::TextDisabled("Logs, saves, settings and disc images: Files app > On My iPhone > Luigi's Mansion. This session: %s",
+    recomp::menu::Note("%s, %s. %s.", native::deviceModel().c_str(), native::osVersion().c_str(), memorySummary().c_str());
+    if (const char* pad = touch::physicalController()) recomp::menu::Note("Controller: %s (touch controls hidden).", pad);
+    recomp::menu::Note("Logs, saves, settings and disc images: Files app > On My iPhone > Luigi's Mansion. This session: %s",
                         sessionlog::path().filename().string().c_str());
     return false;  // already saved
 }
