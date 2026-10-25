@@ -2,6 +2,7 @@
 #include "mobile/native.h"
 
 #import <CoreHaptics/CoreHaptics.h>
+#import <CoreText/CoreText.h>
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
@@ -87,15 +88,19 @@ namespace fs = std::filesystem;
 
 // ---- Display rate ----------------------------------------------------------------------------
 
-// Only its preferred frame rate range matters: the system runs a ProMotion panel at the rate the
-// active display links ask for.
-@interface LMRateLink : NSObject
+// A display link on a thread of its own: every tick is a refresh of the panel, handed to the frame
+// pacer (pacing.cpp displayRefreshed). Its preferred rate also tells iOS which rate to run a
+// ProMotion panel at.
+@interface LMRefreshLink : NSObject
 @property(nonatomic, strong) CADisplayLink* link;
+@property(nonatomic) void (*onRefresh)(void);
+@property(nonatomic) CFRunLoopRef runLoop;
 - (void)tick:(CADisplayLink*)link;
 @end
 
-@implementation LMRateLink
+@implementation LMRefreshLink
 - (void)tick:(CADisplayLink*)link {
+  if (self.onRefresh) self.onRefresh();
 }
 @end
 
@@ -169,27 +174,82 @@ void rumble(bool on) {
   });
 }
 
-int setDisplayRate(int hz) {
-  static LMRateLink* sRate = nil;
+int startRefreshSignal(int hz, void (*onRefresh)()) {
+  static LMRefreshLink* sLink = nil;
   static std::atomic<int> sHz{0};
   const int maxHz = int(UIScreen.mainScreen.maximumFramesPerSecond);
-  const int want = hz <= 0 ? 0 : std::min(hz, maxHz);
+  const int want = std::clamp(hz, 30, std::max(maxHz, 30));
   if (sHz.exchange(want) == want) return want;
-  onMain(^{
-    if (sRate == nil) {
-      sRate = [[LMRateLink alloc] init];
-      sRate.link = [CADisplayLink displayLinkWithTarget:sRate selector:@selector(tick:)];
-      [sRate.link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
-    }
-    const int h = sHz.load();
-    if (h <= 0) {
-      sRate.link.paused = YES;
-      return;
-    }
-    sRate.link.preferredFrameRateRange = CAFrameRateRangeMake(float(h), float(h), float(h));
-    sRate.link.paused = NO;
-  });
+  if (sLink == nil) {
+    sLink = [[LMRefreshLink alloc] init];
+    sLink.onRefresh = onRefresh;
+    LMRefreshLink* owner = sLink;
+    NSThread* thread = [[NSThread alloc] initWithBlock:^{
+      owner.runLoop = CFRunLoopGetCurrent();
+      owner.link = [CADisplayLink displayLinkWithTarget:owner selector:@selector(tick:)];
+      const float h = float(sHz.load());
+      owner.link.preferredFrameRateRange = CAFrameRateRangeMake(h, h, h);
+      [owner.link addToRunLoop:NSRunLoop.currentRunLoop forMode:NSRunLoopCommonModes];
+      for (;;) [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:NSDate.distantFuture];
+    }];
+    thread.name = @"LM display refresh";
+    thread.qualityOfService = NSQualityOfServiceUserInteractive;
+    [thread start];
+    return want;
+  }
+  // A new rate: set on the link's own thread.
+  if (CFRunLoopRef rl = sLink.runLoop) {
+    LMRefreshLink* owner = sLink;
+    CFRunLoopPerformBlock(rl, kCFRunLoopCommonModes, ^{
+      const float h = float(sHz.load());
+      owner.link.preferredFrameRateRange = CAFrameRateRangeMake(h, h, h);
+    });
+    CFRunLoopWakeUp(rl);
+  }
   return want;
+}
+
+const std::vector<unsigned char>& systemFont(std::string& name) {
+  static std::vector<unsigned char> sData;
+  static std::string sName;
+  static bool sTried = false;
+  if (!sTried) {
+    sTried = true;
+    // The system UI font's file: San Francisco on iOS (a TrueType outline font; stb_truetype, which
+    // ImGui uses, reads its default instance).
+    const auto tryFont = [](CTFontRef font) -> bool {
+      if (font == nullptr) return false;
+      CFURLRef url = static_cast<CFURLRef>(CTFontCopyAttribute(font, kCTFontURLAttribute));
+      CFStringRef ps = CTFontCopyPostScriptName(font);
+      bool ok = false;
+      if (url != nullptr) {
+        NSData* data = [NSData dataWithContentsOfURL:(__bridge NSURL*)url];
+        const unsigned char* b = static_cast<const unsigned char*>(data.bytes);
+        // A single font (TrueType 0x00010000 / 'true', or CFF 'OTTO'); a collection ('ttcf') would
+        // need a face index.
+        if (data.length > 1024 && b != nullptr &&
+            ((b[0] == 0 && b[1] == 1 && b[2] == 0 && b[3] == 0) || std::memcmp(b, "true", 4) == 0 ||
+             std::memcmp(b, "OTTO", 4) == 0)) {
+          sData.assign(b, b + data.length);
+          sName = std::string(ps ? [(__bridge NSString*)ps UTF8String] : "system font") + " (" +
+                  [((__bridge NSURL*)url).path UTF8String] + ")";
+          ok = true;
+        } else {
+          sName = std::string("system font file not usable: ") + [((__bridge NSURL*)url).path UTF8String];
+        }
+        CFRelease(url);
+      } else {
+        sName = "system font has no file URL";
+      }
+      if (ps) CFRelease(ps);
+      CFRelease(font);
+      return ok;
+    };
+    if (!tryFont(CTFontCreateUIFontForLanguage(kCTFontUIFontSystem, 17.0, nullptr)))
+      tryFont(CTFontCreateWithName(CFSTR("HelveticaNeue"), 17.0, nullptr));
+  }
+  name = sName;
+  return sData;
 }
 
 int thermalState() { return int(NSProcessInfo.processInfo.thermalState); }

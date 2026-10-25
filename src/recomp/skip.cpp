@@ -24,15 +24,18 @@
 #include "recomp/gx_bridge.h"
 #include "recomp/hle.h"
 #include "recomp/menu.h"
+#include "recomp/ui_scale.h"
 #include "recomp/version.h"
 
 #include <dolphin/pad.h>
 #include <imgui.h>
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <atomic>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -381,6 +384,29 @@ void drawOverlay() {
         dl->AddText(font, px, pos, color, s);
     };
 
+    if (sSkipping.load() && mobile::enabled()) {
+        // Phone: the menu's moonlit look, inside the safe area (clear of the camera housing): a
+        // night-violet screen, "SKIPPING" in the accent gold over a lavender rule and three dots
+        // that pulse while the game runs ahead.
+        dl->AddRectFilled(ImVec2(0, 0), size, IM_COL32(12, 10, 22, 255));
+        float l = 0, t = 0, r = 0, b = 0;
+        mobile::safeAreaInsets(l, t, r, b);
+        const float s = recomp::ui::scale();
+        ImFont* font = ImGui::GetFont();
+        const float px = std::round(ImGui::GetFontSize() * 1.1f);
+        const ImVec2 ts = font->CalcTextSizeA(px, FLT_MAX, 0.0f, "SKIPPING");
+        const ImVec2 at(size.x - r - 24.0f * s - ts.x, size.y - b - 22.0f * s - ts.y);
+        dl->AddText(font, px, at, IM_COL32(242, 197, 92, 255), "SKIPPING");
+        dl->AddLine(ImVec2(at.x, at.y + ts.y + 4.0f * s), ImVec2(at.x + ts.x, at.y + ts.y + 4.0f * s), IM_COL32(143, 134, 179, 200),
+                    std::max(1.0f, 1.5f * s));
+        const double now = ImGui::GetTime();
+        for (int i = 0; i < 3; i++) {
+            const float a = 0.35f + 0.65f * float(0.5 + 0.5 * std::sin(now * 5.0 - i * 0.9));
+            dl->AddCircleFilled(ImVec2(at.x - (20.0f - 7.0f * i) * s, at.y + ts.y * 0.55f), 2.4f * s,
+                                IM_COL32(242, 197, 92, int(a * 255)), 12);
+        }
+        return;
+    }
     if (sSkipping.load()) {
         dl->AddRectFilled(ImVec2(0, 0), size, IM_COL32(0, 0, 0, 255));
         text("Skipping...", ImVec2(size.x - 24 * scale, size.y - 20 * scale), ImVec2(1, 1), IM_COL32(220, 220, 220, 255),

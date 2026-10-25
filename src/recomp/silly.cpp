@@ -776,7 +776,7 @@ const void* texOverride(u32 image, u32 width, u32 height, u32 gxFormat) {
 // ---- menu --------------------------------------------------------------------------------------
 
 namespace {
-void tip(const char* t) { ImGui::SetItemTooltip("%s", t); }
+void tip(const char* t) { recomp::menu::ItemTooltip("%s", t); }
 
 struct Preset {
     const char* name;
@@ -827,7 +827,7 @@ void drawLuigiOptions() {
     applyEnvOnce();
     auto& s = port::settings().sillyLuigi;
     bool save = false;
-    ImGui::SeparatorText("Luigi");
+    recomp::menu::SeparatorText("Luigi");
     menu::SliderFloat("Head size", &s.headScale, 0.25f, 3.0f, "%.2fx");
     save |= ImGui::IsItemDeactivatedAfterEdit();
     tip("Scales Luigi's head (with his cap, face and mustache) about his neck, in gameplay\n"
@@ -854,7 +854,7 @@ void drawLuigiOptions() {
         if (menu::SmallButton("Original sizes")) s.headScale = s.bodyScale = 1.0f, save = true;
     }
 
-    ImGui::SeparatorText("Luigi's clothes");
+    recomp::menu::SeparatorText("Luigi's clothes");
     ImGui::TextUnformatted("Outfit:");
     for (const Outfit& o : kOutfits) {
         ImGui::SameLine();
@@ -876,7 +876,7 @@ void drawLuigiOptions() {
                      "Recolours the blue overalls (shading kept). The yellow buttons stay.");
     save |= pieceRow("Shoes", port::kSillyShoes, kClothPresets, int(std::size(kClothPresets)),
                      "Recolours the brown shoes (shading kept).");
-    ImGui::SeparatorText("Poltergust 3000");
+    recomp::menu::SeparatorText("Poltergust 3000");
     save |= pieceRow("Poltergust", port::kSillyPoltergust, kPoltergustPresets, int(std::size(kPoltergustPresets)),
                      "Recolours the red tank of the Poltergust 3000 (shading kept). The nozzle,\n"
                      "hose and metal parts stay.");

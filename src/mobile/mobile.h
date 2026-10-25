@@ -48,12 +48,13 @@ void onRumble(u32 chan, u32 cmd);
 // Display model (widescreen.cpp, ui_scale.cpp).
 float targetAspect();      // width / height chosen in Aspect Ratio; 0 = the device's
 bool fitScaling();         // Screen Scaling = Fit
+bool upscalingOn();        // Upscaling = MetalFX and available (crt.cpp drops the display copy filter pass)
 float uiMultiplier();      // UI Size: 0.85 / 1 / 1.2
 // Applies Resolution (render height) and the frame rate now; called when a row changes.
 void applyDisplay();
-// The refresh rate the panel is held at (60 or 120; frame.cpp reports it to the frame pacer
-// instead of the panel's maximum). 0 = not held (PC).
-float displayRateLock();
+// The refresh rate the panel really runs at, measured from the display link's ticks (frame.cpp
+// reports it to the frame pacer instead of the advertised maximum). 0 = not known (PC).
+float measuredRefreshHz();
 
 // F1 > iPhone tab. Returns true when a setting changed (saved at once).
 bool drawSettingsTab();

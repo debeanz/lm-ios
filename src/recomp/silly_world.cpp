@@ -445,13 +445,13 @@ bool discoOn() { return cfg().disco; }
 
 namespace recomp::silly {
 namespace {
-void tipW(const char* t) { ImGui::SetItemTooltip("%s", t); }
+void tipW(const char* t) { recomp::menu::ItemTooltip("%s", t); }
 }  // namespace
 
 void drawWorldOptions() {
     auto& s = port::settings().sillyWorld;
     bool save = false;
-    ImGui::SeparatorText("Ghosts");
+    recomp::menu::SeparatorText("Ghosts");
     menu::SliderFloat("Ghost size", &s.ghostSize, 0.5f, 3.0f, "%.2fx");
     save |= ImGui::IsItemDeactivatedAfterEdit();
     tipW("Tiny or giant ghosts: every ghost's whole model is drawn scaled about its position.\n"
@@ -471,7 +471,7 @@ void drawWorldOptions() {
          "With Disco mansion on, the ghosts cycle through the disco colours instead (each\n"
          "starting from its shuffled colour).");
 
-    ImGui::SeparatorText("Mansion");
+    recomp::menu::SeparatorText("Mansion");
     save |= menu::Checkbox("Disco mansion", &s.disco);
     tipW("The room light slowly cycles through the colours of the rainbow. Works on the game's\n"
          "own room light; with Enhanced lighting the lamps and chandeliers join in.\n"
@@ -487,14 +487,14 @@ void drawWorldOptions() {
     ImGui::Unindent();
     ImGui::EndDisabled();
 
-    ImGui::SeparatorText("Luigi's voice");
+    recomp::menu::SeparatorText("Luigi's voice");
     menu::SliderFloat("Voice pitch", &s.luigiVoicePitch, 0.5f, 2.0f, "%.2fx");
     save |= ImGui::IsItemDeactivatedAfterEdit();
     tipW("Higher (chipmunk) or lower (deep) Luigi: only his voice clips (calling Mario, yelps\n"
          "and other reactions), not the music or other sounds. Applies to the next thing he\n"
          "says. 1.00x = original.");
 
-    ImGui::SeparatorText("Treasure");
+    recomp::menu::SeparatorText("Treasure");
     save |= menu::Checkbox("Moon gravity", &s.moonGravity);
     tipW("Coins, bills, gold bars and gems that spill out fall slowly, fly higher and bounce more,\n"
          "then settle as usual and can be collected. They vanish after the usual time.");

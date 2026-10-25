@@ -3,6 +3,7 @@
 // recomp/version.h); how each was found: docs/UNUSED_CONTENT.md.
 #include "recomp/dev_tools.h"
 
+#include "mobile/mobile.h"
 #include "port/install.h"
 #include "port/settings.h"
 #include "recomp/guest_util.h"
@@ -457,7 +458,7 @@ void drawOverlays() {
 namespace {
 
 // Tooltip of the option just drawn (also while it is greyed out), as everywhere else in the menu.
-void helpMarker(const char* text) { ImGui::SetItemTooltip("%s", text); }
+void helpMarker(const char* text) { recomp::menu::ItemTooltip("%s", text); }
 
 // One table of maps with "Go" buttons; `unusedOnly` limits it to the maps normal play never loads.
 void mapTable(const char* id, bool unusedOnly) {
@@ -480,14 +481,14 @@ void mapTable(const char* id, bool unusedOnly) {
             ImGui::BeginDisabled(!m[i].loads);
             if (recomp::menu::SmallButton(label)) requestWarp(m[i].no, 0);
             ImGui::EndDisabled();
-            if (!m[i].loads) ImGui::SetItemTooltip("This map does not load.");
+            if (!m[i].loads) recomp::menu::ItemTooltip("This map does not load.");
             ImGui::TableNextColumn();
             ImGui::Text("%2d  %s", m[i].no, m[i].name);
-            if (m[i].note) ImGui::SetItemTooltip("%s", m[i].note);
+            if (m[i].note) recomp::menu::ItemTooltip("%s", m[i].note);
             if (!m[i].used) {
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "unused");
-                if (m[i].note) ImGui::SetItemTooltip("%s", m[i].note);
+                if (m[i].note) recomp::menu::ItemTooltip("%s", m[i].note);
             }
         }
         ImGui::EndTable();
@@ -504,10 +505,10 @@ void unusedSection() {
     helpMarker("A screen pass in the game-scene draw (fn_8005E9EC) behind a flag nothing sets\n"
                "(0x804D86B0): the frame is copied at quarter size and blended back by depth,\n"
                "blurring everything away from the camera.");
-    ImGui::SeparatorText("Unused areas");
+    recomp::menu::SeparatorText("Unused areas");
     mapTable("unusedmaps", true);
 
-    ImGui::SeparatorText("Unused rooms");
+    recomp::menu::SeparatorText("Unused rooms");
     ImGui::TextDisabled("Leftover room models. Go warps to the retail room and shows the old model\n"
                         "for that visit only.");
     // Its hooks (Luigi's start position for the visited room) are written against the USA code.
@@ -525,7 +526,7 @@ void unusedSection() {
             if (recomp::menu::SmallButton(label)) rooms::visit(i);
             ImGui::TableNextColumn();
             ImGui::Text("%s%s", lr[i].name, rooms::active() == i ? "  (showing)" : "");
-            ImGui::SetItemTooltip("%s\nmap %d%s", lr[i].note, lr[i].map, lr[i].room >= 0 ? ", room swap" : "");
+            recomp::menu::ItemTooltip("%s\nmap %d%s", lr[i].note, lr[i].map, lr[i].room >= 0 ? ", room swap" : "");
         }
         ImGui::EndTable();
     }
@@ -535,19 +536,24 @@ void unusedSection() {
 void debugSection() {
     auto& e = port::settings().enhancements;
     ImGui::TextDisabled("Debug features left in the retail game, plus port-side viewers. All off by default.");
-    ImGui::SeparatorText("Overlays and viewers");
+    recomp::menu::SeparatorText("Overlays and viewers");
     if (recomp::menu::Checkbox("Particle manager report (JUTReport)", &e.dbgParticleReport)) port::saveSettings();
     helpMarker("Emitter / particle / child counts and per-group usage printed by the game's particle\n"
                "manager with JUTReport (flag 0x804D8E04; retail never sets it nor creates the print queue).");
-    recomp::menu::Checkbox("Info overlay (F3)", &sInfoOverlay);
+    // Phone: no F3 / F4 keys, so the labels leave them out.
+    const bool phone = mobile::enabled();
+    recomp::menu::Checkbox(phone ? "Info overlay" : "Info overlay (F3)", &sInfoOverlay);
     helpMarker("Port-side: current map, room and Luigi's position.");
     // "###" keeps one ID while the label changes (the click lands on the same button).
-    if (recomp::menu::Button(viewer::isOpen() ? "Close model viewer (F4)###modelviewer" : "Model viewer (F4)###modelviewer"))
+    if (recomp::menu::Button(viewer::isOpen() ? (phone ? "Close model viewer###modelviewer" : "Close model viewer (F4)###modelviewer")
+                                              : (phone ? "Model viewer###modelviewer" : "Model viewer (F4)###modelviewer")))
         viewer::setOpen(!viewer::isOpen());
-    helpMarker("Port-side viewer for every model on the disc (and whole maps), drawn with the game's own\n"
-               "model code. F4 opens and closes it in game.");
+    helpMarker(phone ? "Port-side viewer for every model on the disc (and whole maps), drawn with the game's own "
+                       "model code. Opens in its own window; this button closes it again."
+                     : "Port-side viewer for every model on the disc (and whole maps), drawn with the game's own\n"
+                       "model code. F4 opens and closes it in game.");
 
-    ImGui::SeparatorText("Debug modes (Action Replay codes)");
+    recomp::menu::SeparatorText("Debug modes (Action Replay codes)");
     bool dirty = false;
     dirty |= recomp::menu::Checkbox("Debug mode (Luigi debug flags)", &e.dbgLuigiFlags);
     helpMarker("AR 403A2B84 001325CB: Luigi's debug flags (+0x1324) low byte = 0xCB every frame.\n"
@@ -561,7 +567,7 @@ void debugSection() {
     dirty |= recomp::menu::Checkbox("XYZ axes at Luigi", &e.dbgAxes);
     helpMarker("Axis vectors at Luigi's position and facing. AR: NOP 0x800B1794.");
     static const char* kHud[] = {"Off", "Icons", "Numbers", "Element meter"};
-    dirty |= ImGui::Combo("HUD test", &e.dbgHudTest, kHud, 4);
+    dirty |= recomp::menu::Combo("HUD test", &e.dbgHudTest, kHud, 4);
     helpMarker("The HUD sprite test (flag 0x804D854A) and its three sprite sets.\n"
                "AR: 0x80043910 addi r16, r16, 0xA90 / -0x300 / 0xFA0.");
     dirty |= recomp::menu::Checkbox("Font test", &e.dbgFontTest);
@@ -571,12 +577,12 @@ void debugSection() {
     ImGui::SameLine();
     dirty |= recomp::menu::Checkbox("Latin last line (PAL fix)", &e.dbgFontTestLatin);
     ImGui::EndDisabled();
-    ImGui::SetItemTooltip("%s", ver::pal() ? "The European version's font test already prints Latin lines."
+    recomp::menu::ItemTooltip("%s", ver::pal() ? "The European version's font test already prints Latin lines."
                                            : "The font test's last line prints \"alphabet 123\" in Latin letters, as the\n"
                                              "European version does. Needs \"Font test\".");
     if (dirty) port::saveSettings();
 
-    ImGui::SeparatorText("Visit area");
+    recomp::menu::SeparatorText("Visit area");
     if (recomp::menu::Checkbox("Skip entry cutscenes", &e.dbgWarpSkipEvents)) port::saveSettings();
     helpMarker("A warp does not start the cutscene or event the destination plays on arrival\n"
                "(E. Gadd in the lab and the Portrificationizer room, the training explanation,\n"

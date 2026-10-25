@@ -10,6 +10,7 @@
 #include "port/update.h"
 #include "recomp/frame.h"
 #include "recomp/menu.h"
+#include "recomp/pacing.h"
 #include "recomp/ui_scale.h"
 
 #include <aurora/aurora.h>
@@ -23,6 +24,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -51,7 +53,6 @@ constexpr const char* kFrameRateLabels[] = {"30 FPS", "60 FPS", "120 FPS (ProMot
 constexpr int kFrameRates[] = {30, 60, 120};
 constexpr const char* kUiSizeLabels[] = {"Small", "Default", "Large"};
 constexpr float kUiSizeMultipliers[] = {0.85f, 1.0f, 1.2f};
-constexpr const char* kOffOn[] = {"Off", "On"};
 constexpr const char* kStickLabels[] = {"Fixed", "Floating"};
 
 port::MobileSettings& ms() { return port::settings().mobile; }
@@ -214,56 +215,6 @@ void onNativeEvent(const char* what) {
     }
 }
 
-// ---- Settings rows ---------------------------------------------------------------------------
-
-// One phone row: the title, then [<] value [>]; tapping the value steps forward. Wraps around.
-bool row(const char* title, const char* const* values, int count, int& index) {
-    bool changed = false;
-    ImGui::PushID(title);
-    ImGui::TableNextRow(0, ImGui::GetFrameHeight() * 1.6f);
-    ImGui::TableNextColumn();
-    ImGui::AlignTextToFramePadding();
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + ImGui::GetFrameHeight() * 0.3f);
-    ImGui::TextUnformatted(title);
-    ImGui::TableNextColumn();
-    const float h = ImGui::GetFrameHeight() * 1.5f;
-    const float valueW = std::max(ImGui::GetContentRegionAvail().x - 2.0f * h - 2.0f * ImGui::GetStyle().ItemSpacing.x, h);
-    int next = index;
-    if (ImGui::ArrowButtonEx("##prev", ImGuiDir_Left, ImVec2(h, h))) next = (index + count - 1) % count;
-    ImGui::SameLine();
-    if (ImGui::Button(values[std::clamp(index, 0, count - 1)], ImVec2(valueW, h))) next = (index + 1) % count;
-    ImGui::SameLine();
-    if (ImGui::ArrowButtonEx("##next", ImGuiDir_Right, ImVec2(h, h))) next = (index + 1) % count;
-    if (next != index) {
-        index = next;
-        changed = true;
-        sessionlog::line("settings", "%s -> %s", title, values[index]);
-    }
-    ImGui::PopID();
-    return changed;
-}
-
-bool percentRow(const char* title, int from, int to, int step, int& value) {
-    static char labels[32][8];
-    static const char* ptrs[32];
-    const int n = std::min((to - from) / step + 1, 32);
-    for (int i = 0; i < n; i++) {
-        std::snprintf(labels[i], sizeof(labels[i]), "%d%%", from + i * step);
-        ptrs[i] = labels[i];
-    }
-    int idx = std::clamp((value - from) / step, 0, n - 1);
-    if (!row(title, ptrs, n, idx)) return false;
-    value = from + idx * step;
-    return true;
-}
-
-bool boolRow(const char* title, bool& v) {
-    int i = v ? 1 : 0;
-    if (!row(title, kOffOn, 2, i)) return false;
-    v = i == 1;
-    return true;
-}
-
 // ---- Disc page -------------------------------------------------------------------------------
 
 const char* regionName(const std::string& id) {
@@ -323,6 +274,9 @@ void beforeAurora() {
     // Metal presents with the display's refresh: VSync is always on on a phone.
     s.video.vsync = true;
     s.video.fullscreen = true;
+    // The pacer's variable-refresh detection would read ProMotion's rate changes as a VRR display
+    // (a schedule a little below the refresh rate); the display link's refreshes are a fixed grid.
+    s.video.vrr = 2;
 }
 
 void init() {
@@ -344,6 +298,15 @@ bool handleEvent(const SDL_Event& ev) {
         recomp::menu::shutdown();
         port::saveSettings();
         sessionlog::flush();
+        return false;
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        // View / Select / Share / Minus (the GameCube had none, so the game never reads it) opens
+        // and closes the settings menu.
+        if (ev.gbutton.button == SDL_GAMEPAD_BUTTON_BACK) {
+            recomp::menu::toggle();
+            sessionlog::line("input", "controller View button: menu %s", recomp::menu::isOpen() ? "opened" : "closed");
+            return true;
+        }
         return false;
     case SDL_EVENT_GAMEPAD_ADDED:
     case SDL_EVENT_GAMEPAD_REMOVED:
@@ -420,26 +383,52 @@ float targetAspect() {
 
 bool fitScaling() { return ms().scaling == 0; }
 
+bool upscalingOn() { return enabled() && metalfxOn(); }
+
 float uiMultiplier() { return kUiSizeMultipliers[std::clamp(ms().uiSize, 0, 2)]; }
 
 namespace {
-int sRateLock = 0;
+int sSignalHz = 0;
+// The refresh rate the display link actually delivers (iOS can give less than asked, e.g. 60 in
+// Low Power Mode): an average of its tick intervals, read by frame.cpp for the frame pacer.
+std::atomic<double> sTickInterval{0.0};
+std::atomic<int64_t> sLastTickNs{0};
+
+void onRefreshTick() {
+    recomp::pacing::displayRefreshed();
+    const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();
+    const int64_t prev = sLastTickNs.exchange(now);
+    if (prev == 0) return;
+    const double iv = double(now - prev) * 1e-9;
+    if (iv <= 0.004 || iv > 0.05) return;  // a missed or doubled tick: not the rate
+    const double old = sTickInterval.load();
+    sTickInterval.store(old > 0 ? old * 0.95 + iv * 0.05 : iv);
 }
+}  // namespace
 
 void applyDisplay() {
     const int h = renderHeight();
     VISetFrameBufferScale(h > 0 ? float(h) / 480.0f : 0.0f);
     aurora_set_metalfx(metalfxOn());  // cheap every frame (an atomic store)
-    // Panel refresh held at the frame rate (30 FPS: the game's own frames, shown at 60 Hz).
-    const int want = port::settings().video.targetFps >= 100 ? 120 : 60;
-    if (want != sRateLock) {
-        const int got = native::setDisplayRate(want);
-        if (got > 0) sessionlog::line("display", "panel refresh held at %d Hz (asked %d)", got, want);
-        sRateLock = got;
+    // Refresh signal for the frame pacer: the panel's full rate above 30 FPS (60 FPS = every second
+    // refresh of a 120 Hz panel, each frame shown for exactly two), 60 Hz for the game's own 30.
+    const int want = port::settings().video.targetFps > 30 ? native::maxRefreshRate() : 60;
+    if (want != sSignalHz) {
+        sSignalHz = want;
+        const int got = native::startRefreshSignal(want, &onRefreshTick);
+        if (got > 0) sessionlog::line("display", "refresh signal from the display link at up to %d Hz", got);
     }
 }
 
-float displayRateLock() { return float(sRateLock); }
+float measuredRefreshHz() {
+    const double iv = sTickInterval.load();
+    if (iv <= 0) return 0.0f;
+    // Snap to the panel's real rates (the average wobbles a little).
+    const double hz = 1.0 / iv;
+    for (const double r : {120.0, 90.0, 80.0, 60.0, 48.0, 40.0, 30.0})
+        if (std::fabs(hz - r) < r * 0.06) return float(r);
+    return float(hz);
+}
 
 void safeAreaInsets(float& left, float& top, float& right, float& bottom) {
     left = top = right = bottom = 0;
@@ -462,76 +451,117 @@ bool drawSettingsTab() {
     auto& m = ms();
     auto& s = port::settings();
     bool display = false, any = false;
-    ImGui::TextDisabled("Changes apply and save at once.");
-    if (ImGui::BeginTable("phone", 2, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("title", ImGuiTableColumnFlags_WidthStretch, 0.42f);
-        ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch, 0.58f);
+    const auto note = [](const char* title, const char* const* values, int index) {
+        sessionlog::line("settings", "%s -> %s", title, values[index]);
+    };
+
+    recomp::menu::SeparatorText("Display");
+    {
         // Resolution, with the real panel size in its first entry.
         char nativeLabel[48];
         const AuroraWindowSize ws = aurora_get_window_size();
         std::snprintf(nativeLabel, sizeof(nativeLabel), "Native (%ux%u)", std::max(ws.native_fb_width, ws.native_fb_height),
                       std::min(ws.native_fb_width, ws.native_fb_height));
         const char* resLabels[5] = {nativeLabel, kResolutionLabels[1], kResolutionLabels[2], kResolutionLabels[3], kResolutionLabels[4]};
-        display |= row("Resolution", resLabels, 5, m.resolution);
-        display |= row("Aspect Ratio", kAspectLabels, 4, m.aspect);
-        display |= row("Screen Scaling", kScalingLabels, 2, m.scaling);
-        {
-            // MetalFX (Aurora 0240): the game renders at the Resolution row's height (Native: 2/3 of
-            // the panel) and Apple's spatial upscaler fills the screen. Disabled where unavailable.
-            const bool fx = aurora_metalfx_available();
-            ImGui::BeginDisabled(!fx);
-            int up = fx ? m.upscaling : 0;
-            if (row("Upscaling", kUpscalingLabels, 2, up)) {
-                m.upscaling = up;
-                display = true;
-            }
-            ImGui::EndDisabled();
-            if (!fx) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TableNextColumn();
-                ImGui::TextDisabled("MetalFX is not available on this device.");
-            } else if (m.upscaling == 1) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TableNextColumn();
-                ImGui::TextDisabled("Sharper picture from a lower render resolution (Native renders at 2/3).");
-            }
+        if (recomp::menu::Combo("Resolution", &m.resolution, resLabels, 5)) {
+            display = true;
+            note("Resolution", resLabels, m.resolution);
         }
+        recomp::menu::ItemTooltip("How many lines the game draws. Lower is lighter on the phone: cooler, steadier and longer "
+                                  "battery life. Native is the screen's own resolution.");
+    }
+    if (recomp::menu::Combo("Aspect ratio", &m.aspect, kAspectLabels, 4)) {
+        display = true;
+        note("Aspect Ratio", kAspectLabels, m.aspect);
+    }
+    recomp::menu::ItemTooltip("Shape of the picture. iPhone Default fills the screen (more of the room on the sides); 4:3 is "
+                              "the original shape.");
+    if (recomp::menu::Combo("Scaling", &m.scaling, kScalingLabels, 2)) {
+        display = true;
+        note("Screen Scaling", kScalingLabels, m.scaling);
+    }
+    recomp::menu::ItemTooltip("With another aspect ratio than the screen's: Fit keeps the shape with black bars, Stretch "
+                              "fills the whole screen.");
+    {
+        // MetalFX (Aurora 0240): the game renders at the Resolution row's height (Native: 2/3 of
+        // the panel) and Apple's spatial upscaler fills the screen. Disabled where unavailable.
+        const bool fx = aurora_metalfx_available();
+        ImGui::BeginDisabled(!fx);
+        int up = fx ? m.upscaling : 0;
+        if (recomp::menu::Combo("Upscaling", &up, kUpscalingLabels, 2)) {
+            m.upscaling = up;
+            display = true;
+            note("Upscaling", kUpscalingLabels, up);
+        }
+        ImGui::EndDisabled();
+        if (!fx) {
+            recomp::menu::ItemTooltip("MetalFX is not available on this device.");
+        } else {
+            // Aurora runs MetalFX only when no post-process chain does: the CRT filter's passes
+            // need the picture first, so MetalFX waits while that filter is on.
+            const bool crt = port::settings().crt.enabled;
+            const char* now = m.upscaling == 1 && crt ? "paused while the CRT filter (Graphics) is on" : aurora_metalfx_status();
+            recomp::menu::ItemTooltip("MetalFX draws the game at the Resolution row's size (Native: two thirds of the screen) "
+                                      "and Apple's upscaler sharpens it to the full screen: a cleaner picture for less "
+                                      "work. Not together with the CRT filter. Now: %s",
+                                      now);
+            if (m.upscaling == 1) ImGui::TextDisabled("   MetalFX: %s", now);
+        }
+    }
+
+    recomp::menu::SeparatorText("Performance");
+    {
         int fr = frameRateIndex();
-        if (row("Frame Rate", kFrameRateLabels, 3, fr)) {
+        if (recomp::menu::Combo("Frame rate", &fr, kFrameRateLabels, 3)) {
             s.video.targetFps = kFrameRates[fr];
             s.video.matchDisplay = false;
             s.video.unlimitedFps = false;
             display = true;
+            note("Frame Rate", kFrameRateLabels, fr);
         }
-        any |= boolRow("Show FPS", s.enhancements.showFps);
-        display |= row("UI Size", kUiSizeLabels, 3, m.uiSize);
-        any |= boolRow("Touch Controls", m.touchControls);
-        any |= percentRow("Touch Opacity", 20, 100, 5, m.touchOpacity);
-        any |= percentRow("Touch Size", 70, 150, 10, m.touchSize);
+        recomp::menu::ItemTooltip("Frames shown per second. The game itself runs at 30; above that the frames in between are "
+                                  "added for smoother motion. 120 needs a ProMotion screen and uses more battery.");
+    }
+    any |= recomp::menu::Checkbox("Show FPS", &s.enhancements.showFps);
+    recomp::menu::ItemTooltip("A small frame counter in the top-left corner.");
+
+    recomp::menu::SeparatorText("Touch controls");
+    any |= recomp::menu::Checkbox("Touch controls", &m.touchControls);
+    recomp::menu::ItemTooltip("The on-screen GameCube controller. It hides by itself while a controller is connected.");
+    any |= recomp::menu::SliderInt("Opacity", &m.touchOpacity, 20, 100, "%d%%");
+    recomp::menu::ItemTooltip("How see-through the touch controls are.");
+    any |= recomp::menu::SliderInt("Size", &m.touchSize, 70, 150, "%d%%");
+    recomp::menu::ItemTooltip("How big the touch controls are.");
+    {
         int stick = m.floatingStick ? 1 : 0;
-        if (row("Control Stick", kStickLabels, 2, stick)) {
+        if (recomp::menu::Combo("Control stick", &stick, kStickLabels, 2)) {
             m.floatingStick = stick == 1;
             any = true;
+            note("Control Stick", kStickLabels, stick);
         }
-        any |= boolRow("Vibration", m.haptics);
-        ImGui::EndTable();
+        recomp::menu::ItemTooltip("Fixed stays in its place; Floating appears where your thumb lands on the left side.");
     }
+    any |= recomp::menu::Checkbox("Vibration", &m.haptics);
+    recomp::menu::ItemTooltip("Taps on the touch controls, and the game's rumble while you play with them.");
+
+    recomp::menu::SeparatorText("Interface");
+    if (recomp::menu::Combo("Menu text", &m.uiSize, kUiSizeLabels, 3)) {
+        display = true;
+        note("UI Size", kUiSizeLabels, m.uiSize);
+    }
+    recomp::menu::ItemTooltip("Size of the text in this menu and the other overlays.");
+
     if (display) applyDisplay();
     if (display || any) {
         port::saveSettings();
         logSettings("changed");
     }
 
-    ImGui::SeparatorText("About this device");
+    recomp::menu::SeparatorText("This device");
     ImGui::TextWrapped("%s, %s. %s.", native::deviceModel().c_str(), native::osVersion().c_str(), memorySummary().c_str());
     if (const char* pad = touch::physicalController()) ImGui::TextWrapped("Controller: %s (touch controls hidden).", pad);
-    ImGui::SeparatorText("Logs");
-    ImGui::TextWrapped("Every session is logged in detail and saved as it runs: Files app > On My iPhone > "
-                       "Luigi's Mansion > Logs (the last 10 sessions). This session: %s",
-                       sessionlog::path().filename().string().c_str());
-    ImGui::TextWrapped("Saves, settings and disc images are in the same folder.");
+    ImGui::TextDisabled("Logs, saves, settings and disc images: Files app > On My iPhone > Luigi's Mansion. This session: %s",
+                        sessionlog::path().filename().string().c_str());
     return false;  // already saved
 }
 

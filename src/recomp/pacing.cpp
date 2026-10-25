@@ -5,6 +5,7 @@
 #include "recomp/frame.h"
 #include "recomp/hle.h"
 #include "recomp/interp.h"
+#include "recomp/skip.h"
 
 #include <aurora/aurora.h>
 #include <aurora/present_timing.h>
@@ -170,6 +171,27 @@ bool vblankAvailable() {
     std::lock_guard lk(sVb.m);
     return sVb.count > 0 && Clock::now() - sVb.last < std::chrono::milliseconds(200);
 }
+
+}  // namespace
+
+// iPhone / iPad (src/mobile): a display link on its own thread calls this at every refresh of the
+// panel, the same signal the Windows monitor above gives (fixed-refresh schedule: 60 fps on a
+// 120 Hz ProMotion panel starts a frame at every second refresh, so each is shown for exactly two).
+void displayRefreshed() {
+    {
+        std::lock_guard lk(sVb.m);
+        const auto now = Clock::now();
+        if (sVb.last != Clock::time_point{}) {
+            sVb.intervals.push_back(secs(now - sVb.last) * 1000.0);
+            while (sVb.intervals.size() > 240) sVb.intervals.pop_front();
+        }
+        sVb.last = now;
+        sVb.count++;
+    }
+    sVb.cv.notify_all();
+}
+
+namespace {
 
 // --- frame cost --------------------------------------------------------------------------------
 struct FrameRec {
@@ -466,6 +488,21 @@ Governor sGov;
 // After this frame's start (all waits done). `expected`: the period it was scheduled at.
 void governFrame(Clock::time_point start, double expected, double target, bool sameMode) {
     Governor& g = sGov;
+    // A cutscene skip (skip.h) presents one frame per batch of hidden ones: those uneven intervals
+    // say nothing about the rate the device holds. The governor sits out the skip and starts afresh
+    // after it (on a phone a skip used to leave it limited to 30 fps for ~10 s: lag after a skip).
+    static bool sWasFast = false;
+    const bool fast = skip::retraceSpeed() > 1.0;
+    if (fast || sWasFast) {
+        if (!fast && sWasFast) log("[pacing] skip over: governor reset (was %.1f fps)", g.limit > 0 ? 1.0 / g.limit : 0.0);
+        sWasFast = fast;
+        const u32 hitches = g.hitches, slowdowns = g.slowdowns;
+        g = Governor{};
+        g.hitches = hitches;
+        g.slowdowns = slowdowns;
+        g.prevStart = start;
+        return;
+    }
     const Clock::time_point prev = g.prevStart;
     g.prevStart = start;
     if (!sameMode || prev == Clock::time_point{} || expected <= 0) return;

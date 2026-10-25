@@ -32,7 +32,7 @@ std::mutex sExtraM;
 bool sDirty = false;
 
 void tip(const char* text) {
-    ImGui::SetItemTooltip("%s", text);
+    recomp::menu::ItemTooltip("%s", text);
 }
 void note(const char* text) {
     ImGui::SameLine();
@@ -212,7 +212,7 @@ void unusedSection(UnusedGroup group) {
 
 void gameplaySection() {
     auto& u = port::settings().unused2;
-    ImGui::SeparatorText("Unfinished Luigi states");
+    recomp::menu::SeparatorText("Unfinished Luigi states");
     ImGui::TextDisabled("Restored from code left in the game. All off by default.");
     sDirty |= recomp::menu::Checkbox("Poison mushrooms poison Luigi", &u.poisonState);
     tip("Touching a poison mushroom no longer shrinks Luigi. Instead he plays the unused poisoned\n"
@@ -259,7 +259,7 @@ void gameplaySection() {
     }
 }
 void debugSection() {
-    ImGui::SeparatorText("Unused content viewers");
+    recomp::menu::SeparatorText("Unused content viewers");
     galleryButton();
     ImGui::SameLine();
     textArchiveButton();

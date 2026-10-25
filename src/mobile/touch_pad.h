@@ -2,6 +2,9 @@
 // The on-screen GameCube controller (touch_pad.cpp). Internal to src/mobile.
 #include <dolphin/types.h>
 
+#include <imgui.h>
+#include <imgui_internal.h>
+
 union SDL_Event;
 struct PADStatus;
 
@@ -13,6 +16,11 @@ void draw();                            // inside the ImGui frame, over everythi
 void releaseAll();                      // app backgrounded, layout changed under a finger
 bool visible();                         // drawn and feeding the game (no physical controller, not switched off)
 const char* physicalController();       // name of a connected controller, or nullptr
+
+// Menu scrolling by touch (menu.cpp): if the current drag started inside `region`, the distance the
+// finger moved since the last call (or, after a flick, this frame's glide); `start` is where it
+// began. False: nothing to scroll there.
+bool scrollFor(const ImRect& region, ImVec2& delta, ImVec2& start);
 
 // Guest thread (PADRead).
 void applyPad(PADStatus* status);

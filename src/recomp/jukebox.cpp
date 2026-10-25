@@ -265,7 +265,7 @@ void jukeboxFrame(Ctx& c) {
 }
 
 void soundSection() {
-    ImGui::SeparatorText("Jukebox");
+    recomp::menu::SeparatorText("Jukebox");
     if (ui::target() >= 0) ImGui::SetScrollHereY(0.0f);  // LM_JUKEBOX_UI: the section in view
     std::call_once(sLoad, load);
     if (sTracks.empty()) {
@@ -280,10 +280,10 @@ void soundSection() {
         sNowPlaying = -1;
     }
     ui::atButton(0);
-    ImGui::SetItemTooltip("Stops the sequenced music the jukebox (or the game) is playing.");
+    recomp::menu::ItemTooltip("Stops the sequenced music the jukebox (or the game) is playing.");
     ImGui::SameLine();
     recomp::menu::Checkbox("Only tracks not heard in retail", &sUnusedOnly);
-    ImGui::SetItemTooltip("Lists only the music the retail game never plays (USA version).");
+    recomp::menu::ItemTooltip("Lists only the music the retail game never plays (USA version).");
     const bool us = !ver::pal();
     // "Playing" only while the game's music player still runs the picked track (it ended, was
     // stopped, or the game started other music: back to "Play").

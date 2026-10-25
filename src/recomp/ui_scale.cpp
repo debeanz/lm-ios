@@ -20,6 +20,7 @@
 #include "recomp/ui_scale.h"
 
 #include "mobile/mobile.h"
+#include "mobile/native.h"
 #include "port/settings.h"
 
 #include <aurora/aurora.h>
@@ -116,11 +117,10 @@ void frameCallback(const AuroraWindowSize* size) {
     // The menu needs about 560 x 330 units at 100% to be usable (tab bar, a few rows).
     float fit = std::min(logicalW / 560.0f, logicalH / 330.0f);
     if (mobile::enabled()) {
-        // Phone (src/mobile): read like a handheld console, about 1.5x the PC size in points, times
-        // the iPhone tab's UI Size; the full-screen menu scrolls, so it only has to fit sideways
-        // and show a few rows.
-        autoScale = 1.5f * mobile::uiMultiplier();
-        fit = std::min(logicalW / 560.0f, logicalH / 220.0f);
+        // Phone (src/mobile): iPhone-sized text (about 16 pt with the system font) times the menu
+        // text size setting; the menu panel scrolls, so it only has to fit sideways.
+        autoScale = 1.25f * mobile::uiMultiplier();
+        fit = std::min(logicalW / 420.0f, logicalH / 200.0f);
     }
     sFit = stepDown(fit);
     sAuto = std::min(stepDown(autoScale), sFit);
@@ -140,13 +140,36 @@ void frameCallback(const AuroraWindowSize* size) {
     const float fontPx = std::round(13.0f * s * density);
     if (fontPx != sFontPx || density != sFontDensity) {
         io.Fonts->Clear();
-        ImFontConfig cfg;
-        cfg.OversampleH = cfg.OversampleV = 1;
-        cfg.PixelSnapH = true;
-        cfg.SizePixels = fontPx;
-        io.Fonts->AddFontDefault(&cfg);  // Fonts[0]: ImGui's default
-        cfg.SizePixels = std::round(13.0f * s * kLarge * density);
-        sLarge = io.Fonts->AddFontDefault(&cfg);
+        // Phone: the system font (San Francisco, read from the device) instead of the small bitmap
+        // font scaled up, which looked pixelated on a phone; anti-aliased, so no pixel snapping.
+        // (Both branches lvalues: the atlas keeps pointing at this data after the callback returns,
+        // so it must be native.cpp's static buffer, never a temporary copy.)
+        std::string fontName;
+        static const std::vector<unsigned char> kNoFont;
+        const std::vector<unsigned char>& sys = mobile::enabled() ? mobile::native::systemFont(fontName) : kNoFont;
+        if (!sys.empty()) {
+            ImFontConfig cfg;
+            cfg.FontDataOwnedByAtlas = false;  // the data stays in native.cpp's static buffer
+            cfg.OversampleH = 2;
+            cfg.OversampleV = 1;
+            void* data = const_cast<unsigned char*>(sys.data());
+            io.Fonts->AddFontFromMemoryTTF(data, int(sys.size()), fontPx, &cfg);  // Fonts[0]
+            sLarge = io.Fonts->AddFontFromMemoryTTF(data, int(sys.size()), std::round(fontPx * kLarge), &cfg);
+            static bool sLogged = false;
+            if (!sLogged) {
+                sLogged = true;
+                std::printf("[ui] menu font: %s\n", fontName.c_str());
+            }
+        } else {
+            if (mobile::enabled()) std::printf("[ui] menu font: ImGui's default (%s)\n", fontName.c_str());
+            ImFontConfig cfg;
+            cfg.OversampleH = cfg.OversampleV = 1;
+            cfg.PixelSnapH = true;
+            cfg.SizePixels = fontPx;
+            io.Fonts->AddFontDefault(&cfg);  // Fonts[0]: ImGui's default
+            cfg.SizePixels = std::round(13.0f * s * kLarge * density);
+            sLarge = io.Fonts->AddFontDefault(&cfg);
+        }
         io.FontGlobalScale = 1.0f / density;  // physical pixels back to ImGui units: 1:1 on screen
         sFontPx = fontPx;
         sFontDensity = density;
@@ -181,7 +204,66 @@ void frameCallback(const AuroraWindowSize* size) {
             st.FrameRounding = st.GrabRounding = 7.0f * s;
             st.TabRounding = 8.0f * s;
             st.ScrollbarRounding = 9.0f * s;
-            st.WindowBorderSize = 0.0f;
+            st.WindowBorderSize = std::max(1.0f, std::round(1.5f * s));
+            st.FrameBorderSize = 1.0f;
+            st.PopupBorderSize = 1.0f;
+            st.TabBarBorderSize = 2.0f;
+            // Moonlit-mansion theme (the approved mockup, after Dusk's menus): deep blue-violet glass,
+            // lavender rules, warm flashlight-yellow accent. Every port window on the phone (menu, FPS,
+            // notices, shader preparation, disc page) uses it.
+            const auto rgb = [](int r, int g, int b, float a = 1.0f) { return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, a); };
+            const ImVec4 accent = rgb(242, 197, 92), lavender = rgb(143, 134, 179);
+            ImVec4* c = st.Colors;
+            c[ImGuiCol_Text] = rgb(227, 223, 240);
+            c[ImGuiCol_TextDisabled] = rgb(154, 147, 184);
+            c[ImGuiCol_WindowBg] = rgb(18, 16, 30, 0.92f);
+            c[ImGuiCol_ChildBg] = rgb(0, 0, 0, 0.0f);
+            c[ImGuiCol_PopupBg] = rgb(24, 20, 38, 0.97f);
+            c[ImGuiCol_Border] = lavender;
+            c[ImGuiCol_BorderShadow] = rgb(0, 0, 0, 0.0f);
+            c[ImGuiCol_FrameBg] = rgb(17, 16, 30, 0.65f);
+            c[ImGuiCol_FrameBgHovered] = rgb(242, 197, 92, 0.18f);
+            c[ImGuiCol_FrameBgActive] = rgb(242, 197, 92, 0.30f);
+            c[ImGuiCol_TitleBg] = rgb(28, 24, 48);
+            c[ImGuiCol_TitleBgActive] = rgb(42, 35, 70);
+            c[ImGuiCol_TitleBgCollapsed] = rgb(28, 24, 48, 0.8f);
+            c[ImGuiCol_MenuBarBg] = rgb(217, 217, 240, 0.08f);
+            c[ImGuiCol_ScrollbarBg] = rgb(0, 0, 0, 0.0f);
+            c[ImGuiCol_ScrollbarGrab] = rgb(143, 134, 179, 0.45f);
+            c[ImGuiCol_ScrollbarGrabHovered] = rgb(143, 134, 179, 0.7f);
+            c[ImGuiCol_ScrollbarGrabActive] = accent;
+            c[ImGuiCol_CheckMark] = accent;
+            c[ImGuiCol_SliderGrab] = rgb(255, 243, 207);
+            c[ImGuiCol_SliderGrabActive] = accent;
+            c[ImGuiCol_Button] = rgb(17, 16, 30, 0.65f);
+            c[ImGuiCol_ButtonHovered] = rgb(242, 197, 92, 0.22f);
+            c[ImGuiCol_ButtonActive] = rgb(242, 197, 92, 0.45f);
+            c[ImGuiCol_Header] = rgb(242, 197, 92, 0.16f);
+            c[ImGuiCol_HeaderHovered] = rgb(242, 197, 92, 0.24f);
+            c[ImGuiCol_HeaderActive] = rgb(242, 197, 92, 0.36f);
+            c[ImGuiCol_Separator] = rgb(143, 134, 179, 0.5f);
+            c[ImGuiCol_SeparatorHovered] = accent;
+            c[ImGuiCol_SeparatorActive] = accent;
+            c[ImGuiCol_ResizeGrip] = rgb(0, 0, 0, 0.0f);
+            c[ImGuiCol_ResizeGripHovered] = rgb(0, 0, 0, 0.0f);
+            c[ImGuiCol_ResizeGripActive] = rgb(0, 0, 0, 0.0f);
+            c[ImGuiCol_Tab] = rgb(0, 0, 0, 0.0f);
+            c[ImGuiCol_TabHovered] = rgb(242, 197, 92, 0.16f);
+            c[ImGuiCol_TabSelected] = rgb(242, 197, 92, 0.14f);
+            c[ImGuiCol_TabSelectedOverline] = accent;
+            c[ImGuiCol_TabDimmed] = rgb(0, 0, 0, 0.0f);
+            c[ImGuiCol_TabDimmedSelected] = rgb(242, 197, 92, 0.10f);
+            c[ImGuiCol_TableHeaderBg] = rgb(217, 217, 240, 0.06f);
+            c[ImGuiCol_TableBorderStrong] = rgb(143, 134, 179, 0.5f);
+            c[ImGuiCol_TableBorderLight] = rgb(143, 134, 179, 0.25f);
+            c[ImGuiCol_TableRowBg] = rgb(0, 0, 0, 0.0f);
+            c[ImGuiCol_TableRowBgAlt] = rgb(217, 217, 240, 0.03f);
+            c[ImGuiCol_TextSelectedBg] = rgb(242, 197, 92, 0.35f);
+            c[ImGuiCol_NavCursor] = accent;
+            c[ImGuiCol_ModalWindowDimBg] = rgb(8, 6, 14, 0.6f);
+            st.TabRounding = 0.0f;  // flat tabs with the accent underline, as in the mockup
+            st.WindowRounding = 14.0f * s;
+            st.FrameRounding = st.GrabRounding = 7.0f * s;
         }
         ImGui::GetStyle() = st;
         sStyleScale = s;

@@ -291,7 +291,7 @@ void loadItem(GalleryItem& it) {
 
 void galleryButton() {
     if (recomp::menu::Button(sGalleryOpen ? "Close gallery###gallery" : "Gallery (unused textures)###gallery")) sGalleryOpen = !sGalleryOpen;
-    ImGui::SetItemTooltip("Opens a window with unused textures and pictures left on the disc.");
+    recomp::menu::ItemTooltip("Opens a window with unused textures and pictures left on the disc.");
 }
 
 void galleryWindow() {
@@ -310,7 +310,7 @@ void galleryWindow() {
     for (GalleryItem& it : sItems) {
         if (!group || std::strcmp(group, it.group)) {
             group = it.group;
-            ImGui::SeparatorText(group);
+            recomp::menu::SeparatorText(group);
         }
         loadItem(it);
         ImGui::TextUnformatted(it.title);

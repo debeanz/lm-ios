@@ -152,8 +152,9 @@ float displayRefreshHz() {
     if (SDL_Window* w = aurora_get_window())
         if (const SDL_DisplayID d = SDL_GetDisplayForWindow(w))
             if (const SDL_DisplayMode* m = SDL_GetCurrentDisplayMode(d)) hz = m->refresh_rate;
-    // Phone with ProMotion: the panel is held at the frame rate (src/mobile), not its 120 Hz maximum.
-    if (const float held = mobile::displayRateLock(); held > 0) hz = held;
+    // Phone: the rate measured from the display link's ticks (src/mobile; ProMotion and Low Power
+    // Mode change it), not the advertised maximum.
+    if (const float measured = mobile::measuredRefreshHz(); measured > 0) hz = measured;
     static float logged = -1;
     if (hz != logged) log("[frame] display refresh rate %.2f Hz", logged = hz);
     return hz;

@@ -19,6 +19,7 @@
 #include "mobile/session_log.h"
 #include "port/settings.h"
 #include "recomp/menu.h"
+#include "recomp/menu_phone.h"
 #include "recomp/ui_scale.h"
 
 #include <aurora/aurora.h>
@@ -256,6 +257,9 @@ void strokeText(ImDrawList* dl, ImVec2 c, float h, const char* text, Rgb face, f
     const float gap = h * 0.24f;
     float total = 0;
     for (const char* p = text; *p; p++) total += glyphWidth(*p) * h + (p[1] ? gap : 0.0f);
+    // Each segment on its own with a round end at every point: a thick polyline gets mitred
+    // (spiky) corners at sharp joins (the A's apex, the X's crossing, the Z's corners).
+    const int roundSegs = std::clamp(int(t * 1.2f), 12, 40);
     const auto draw = [&](ImVec2 shift, ImU32 color, float width) {
         float x = c.x - total * 0.5f;
         for (const char* p = text; *p; p++) {
@@ -263,16 +267,13 @@ void strokeText(ImDrawList* dl, ImVec2 c, float h, const char* text, Rgb face, f
             for (const auto& s : glyph(*p)) {
                 Pts pts;
                 for (const auto& u : s.pts) pts.push_back(ImVec2(x + u.x * w + shift.x, c.y - h * 0.5f + u.y * h + shift.y));
-                dl->AddPolyline(pts.data(), int(pts.size()), color, 0, width);
-                for (const auto& v : pts) dl->AddCircleFilled(v, width * 0.5f, color, 10);  // round joins and caps
+                for (size_t i = 0; i + 1 < pts.size(); i++) dl->AddLine(pts[i], pts[i + 1], color, width);
+                for (const auto& v : pts) dl->AddCircleFilled(v, width * 0.5f, color, roundSegs);
             }
             x += w + gap;
         }
     };
-    if (raised) {
-        draw(ImVec2(0, t * 0.45f), col(darker(face, 0.65f), alpha * 0.85f), t);
-        draw(ImVec2(0, -t * 0.25f), col(lighter(face, 0.55f), alpha * 0.6f), t);
-    }
+    if (raised) draw(ImVec2(0, t * 0.40f), col(darker(face, 0.65f), alpha * 0.75f), t);  // moulded: a shade below
     draw(ImVec2(0, 0), col(face, alpha), t);
 }
 
@@ -575,9 +576,15 @@ void controlUp(int idx) {
     sessionlog::line("touch", "%s up", c.name);
 }
 
-// Finger that missed every control: ImGui's mouse (F1 menu, disc page, notices). A vertical drag of
-// more than a few points that does not start on an active widget (slider) scrolls instead of
-// clicking.
+// Finger that missed every control: ImGui's mouse (F1 menu, disc page, notices). A drag of more than
+// a few points becomes a scroll (scrollFor: the menu moves its lists by the finger's own distance,
+// then glides on after a flick), even when it started on a row; only a slider being dragged keeps
+// the finger. (It used to become mouse-wheel steps, which ImGui feeds one per frame: laggy, and rows
+// grabbed the finger, so only the scrollbar scrolled.)
+ImVec2 sScrollAccum{}, sScrollVel{};
+double sLastMoveTime = 0;
+bool sFling = false;
+
 void mouseDown(SDL_FingerID f, ImVec2 p) {
     if (sMouseDown) return;  // one mouse finger at a time
     ImGuiIO& io = ImGui::GetIO();
@@ -585,6 +592,10 @@ void mouseDown(SDL_FingerID f, ImVec2 p) {
     sMouseFinger = f;
     sMouseStart = sMouseLast = p;
     sMouseScrolling = false;
+    sFling = false;  // a touch stops a glide
+    sScrollVel = ImVec2(0, 0);
+    sScrollAccum = ImVec2(0, 0);
+    sLastMoveTime = now();
     io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
     io.AddMousePosEvent(p.x, p.y);
     io.AddMouseButtonEvent(0, true);
@@ -592,20 +603,31 @@ void mouseDown(SDL_FingerID f, ImVec2 p) {
 
 void mouseMove(ImVec2 p) {
     ImGuiIO& io = ImGui::GetIO();
-    const float slop = 10.0f * recomp::ui::scale();
-    if (!sMouseScrolling && std::fabs(p.y - sMouseStart.y) > slop && !ImGui::IsAnyItemActive()) {
+    const float slop = 9.0f * recomp::ui::scale();
+    const float dx = std::fabs(p.x - sMouseStart.x), dy = std::fabs(p.y - sMouseStart.y);
+    const bool toSlider = recomp::menu::phone::sliderHeld() || (recomp::menu::phone::sliderTouched() && dx >= dy);
+    if (!sMouseScrolling && !toSlider && (dy > slop || dx > slop)) {
         sMouseScrolling = true;
-        // Lift the button away from the widget so nothing is clicked, then scroll where the finger is.
+        // Lift the button away from the row so nothing is clicked.
         io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
         io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
         io.AddMouseButtonEvent(0, false);
+        sLastMoveTime = now();
     }
-    io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
-    io.AddMousePosEvent(p.x, p.y);
+    const double t = now();
     if (sMouseScrolling) {
-        const float step = std::max(ImGui::GetFontSize() * 5.0f, 1.0f);  // ImGui scrolls about 5 lines per wheel unit
-        io.AddMouseWheelEvent(0.0f, (p.y - sMouseLast.y) / step);
+        const ImVec2 d(p.x - sMouseLast.x, p.y - sMouseLast.y);
+        sScrollAccum = ImVec2(sScrollAccum.x + d.x, sScrollAccum.y + d.y);
+        const double dt = t - sLastMoveTime;
+        if (dt > 0.0005) {
+            const float k = 0.4f;  // smoothed finger speed (points per second) for the glide
+            sScrollVel = ImVec2(sScrollVel.x + (float(d.x / dt) - sScrollVel.x) * k, sScrollVel.y + (float(d.y / dt) - sScrollVel.y) * k);
+        }
+    } else {
+        io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+        io.AddMousePosEvent(p.x, p.y);
     }
+    sLastMoveTime = t;
     sMouseLast = p;
 }
 
@@ -616,6 +638,9 @@ void mouseUp() {
     if (!sMouseScrolling) io.AddMouseButtonEvent(0, false);
     // Touch has no hover: park the pointer so nothing stays highlighted.
     io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+    // A flick glides on; a finger that stopped before lifting does not.
+    sFling = sMouseScrolling && now() - sLastMoveTime < 0.08 && std::hypot(sScrollVel.x, sScrollVel.y) > 60.0f;
+    if (!sFling) sScrollVel = ImVec2(0, 0);
     sMouseDown = false;
     sMouseScrolling = false;
 }
@@ -744,57 +769,71 @@ void paintRound(ImDrawList* dl, const Control& c, float a) {
     }
 }
 
-// X / Y: a curved bean around A. Filled as a strip between the outer and inner edge plus two
-// rounded ends, each vertex lit by its outward direction.
-void kidneyFill(ImDrawList* dl, ImVec2 c, float R, float th, float a0, float a1, Rgb base, float alpha, float relief) {
-    const ImVec2 uv = dl->_Data->TexUvWhitePixel;
-    const int seg = 28;
-    const float ro = R + th * 0.5f, ri = R - th * 0.5f;
-    dl->PrimReserve(seg * 6, (seg + 1) * 2);
-    unsigned v0 = dl->_VtxCurrentIdx;
-    for (int i = 0; i <= seg; i++) {
-        const float ang = a0 + (a1 - a0) * float(i) / float(seg);
-        const ImVec2 d(std::cos(ang), std::sin(ang));
-        dl->PrimWriteVtx(add(c, mul(d, ro)), uv, col(shade(base, d, relief), alpha));
-        dl->PrimWriteVtx(add(c, mul(d, ri)), uv, col(shade(base, mul(d, -1.0f), relief * 0.7f), alpha));
+// X / Y: a curved bean around A. One mesh: every outline point (outer arc, rounded end, inner arc,
+// other end) is joined to the matching point of the centre line (the arc at radius R, the ends'
+// centres for the rounded ends), lit by its outward direction; the centre line is the dome's crest.
+// (Shading the ends as separate discs showed as circles at both ends.)
+struct Bean {
+    Pts edge, spine, normal;
+};
+
+Bean bean(ImVec2 c, float R, float th, float a0, float a1) {
+    Bean b;
+    const int seg = 28, cap = 12;
+    const auto dir = [](float ang) { return ImVec2(std::cos(ang), std::sin(ang)); };
+    const auto push = [&](ImVec2 e, ImVec2 s, ImVec2 n) {
+        b.edge.push_back(e);
+        b.spine.push_back(s);
+        b.normal.push_back(n);
+    };
+    for (int i = 0; i <= seg; i++) {  // outer arc, a0 -> a1
+        const ImVec2 d = dir(a0 + (a1 - a0) * float(i) / float(seg));
+        push(add(c, mul(d, R + th * 0.5f)), add(c, mul(d, R)), d);
     }
-    for (int i = 0; i < seg; i++) {
-        const unsigned o = v0 + unsigned(i) * 2;
-        dl->PrimWriteIdx(ImDrawIdx(o));
-        dl->PrimWriteIdx(ImDrawIdx(o + 1));
-        dl->PrimWriteIdx(ImDrawIdx(o + 2));
-        dl->PrimWriteIdx(ImDrawIdx(o + 1));
-        dl->PrimWriteIdx(ImDrawIdx(o + 3));
-        dl->PrimWriteIdx(ImDrawIdx(o + 2));
+    const ImVec2 e1 = add(c, mul(dir(a1), R));
+    for (int i = 1; i < cap; i++) {  // rounded end at a1
+        const ImVec2 d = dir(a1 + kPi * float(i) / float(cap));
+        push(add(e1, mul(d, th * 0.5f)), e1, d);
     }
-    for (const float ang : {a0, a1}) {  // rounded ends
-        const ImVec2 e = add(c, mul(ImVec2(std::cos(ang), std::sin(ang)), R));
-        plastic(dl, circlePts(e, th * 0.5f, 20), base, alpha, relief, 0.0f);
+    for (int i = seg; i >= 0; i--) {  // inner arc, a1 -> a0
+        const ImVec2 d = dir(a0 + (a1 - a0) * float(i) / float(seg));
+        push(add(c, mul(d, R - th * 0.5f)), add(c, mul(d, R)), mul(d, -1.0f));
     }
+    const ImVec2 e0 = add(c, mul(dir(a0), R));
+    for (int i = 1; i < cap; i++) {  // rounded end at a0
+        const ImVec2 d = dir(a0 + kPi + kPi * float(i) / float(cap));
+        push(add(e0, mul(d, th * 0.5f)), e0, d);
+    }
+    return b;
 }
 
-Pts kidneyOutline(ImVec2 c, float R, float th, float a0, float a1) {
-    Pts p;
-    const int seg = 28, cap = 10;
-    for (int i = 0; i <= seg; i++) {
-        const float ang = a0 + (a1 - a0) * float(i) / float(seg);
-        p.push_back(add(c, mul(ImVec2(std::cos(ang), std::sin(ang)), R + th * 0.5f)));
+Pts kidneyOutline(ImVec2 c, float R, float th, float a0, float a1) { return bean(c, R, th, a0, a1).edge; }
+
+void kidneyFill(ImDrawList* dl, ImVec2 c, float R, float th, float a0, float a1, Rgb base, float alpha, float relief) {
+    const Bean b = bean(c, R, th, a0, a1);
+    if (relief <= 0.0f) {  // shadow, flash: one flat shape
+        dl->AddConcavePolyFilled(b.edge.data(), int(b.edge.size()), col(base, alpha));
+        return;
     }
-    const ImVec2 e1 = add(c, mul(ImVec2(std::cos(a1), std::sin(a1)), R));
-    for (int i = 1; i < cap; i++) {
-        const float ang = a1 + kPi * float(i) / float(cap);
-        p.push_back(add(e1, mul(ImVec2(std::cos(ang), std::sin(ang)), th * 0.5f)));
+    const ImVec2 uv = dl->_Data->TexUvWhitePixel;
+    const int n = int(b.edge.size());
+    const ImU32 crest = col(lighter(base, 0.10f), alpha);
+    dl->PrimReserve(n * 6, n * 2);
+    const unsigned v0 = dl->_VtxCurrentIdx;
+    for (int i = 0; i < n; i++) {
+        dl->PrimWriteVtx(b.edge[size_t(i)], uv, col(shade(base, b.normal[size_t(i)], relief), alpha));
+        dl->PrimWriteVtx(b.spine[size_t(i)], uv, crest);
     }
-    for (int i = seg; i >= 0; i--) {
-        const float ang = a0 + (a1 - a0) * float(i) / float(seg);
-        p.push_back(add(c, mul(ImVec2(std::cos(ang), std::sin(ang)), R - th * 0.5f)));
+    for (int i = 0; i < n; i++) {
+        const unsigned e = v0 + unsigned(i) * 2, s = e + 1;
+        const unsigned en = v0 + unsigned((i + 1) % n) * 2, sn = en + 1;
+        dl->PrimWriteIdx(ImDrawIdx(e));
+        dl->PrimWriteIdx(ImDrawIdx(en));
+        dl->PrimWriteIdx(ImDrawIdx(sn));
+        dl->PrimWriteIdx(ImDrawIdx(e));
+        dl->PrimWriteIdx(ImDrawIdx(sn));
+        dl->PrimWriteIdx(ImDrawIdx(s));
     }
-    const ImVec2 e0 = add(c, mul(ImVec2(std::cos(a0), std::sin(a0)), R));
-    for (int i = 1; i < cap; i++) {
-        const float ang = a0 + kPi + kPi * float(i) / float(cap);
-        p.push_back(add(e0, mul(ImVec2(std::cos(ang), std::sin(ang)), th * 0.5f)));
-    }
-    return p;
 }
 
 void paintKidney(ImDrawList* dl, const Control& c, float a) {
@@ -834,13 +873,6 @@ void paintRect(ImDrawList* dl, const Control& c, float a, bool trigger) {
     outline(dl, body, col(darker(c.accent, 0.55f), 0.9f * a), std::max(1.5f, h * 0.05f));
     if (p > 0.01f) flat(dl, body, col(kWhite, 0.15f * p * a));
     glint(dl, add(top, ImVec2(-w * 0.28f, -h * 0.22f)), ImVec2(w * 0.16f, h * 0.10f), a * (1.0f - 0.6f * p));
-    if (trigger) {
-        // analog travel: a groove along the bottom that fills while the trigger is held
-        const float fill = (c.rightTrigger ? sTrigR : sTrigL).load() / 255.0f;
-        const ImVec2 g0(top.x - w * 0.5f + rad, top.y + h * 0.28f), g1(top.x + w * 0.5f - rad, top.y + h * 0.36f);
-        dl->AddRectFilled(g0, g1, col(darker(base, 0.55f), 0.8f * a), h * 0.04f);
-        if (fill > 0) dl->AddRectFilled(g0, ImVec2(g0.x + (g1.x - g0.x) * fill, g1.y), col(lighter(kYellowC, 0.2f), a), h * 0.04f);
-    }
     ripple(dl, c.c, std::max(w, h) * 0.5f, c.ripple, c.accent, a);
     strokeText(dl, add(top, ImVec2(0, trigger ? -h * 0.06f : 0.0f)), h * 0.42f, c.text, letterColour(base, c.tinted),
                std::clamp(a * 1.2f + 0.15f, 0.0f, 1.0f));
@@ -972,6 +1004,27 @@ void pollPhysicalPad() {
 
 bool visible() { return sVisible; }
 bool feeding() { return sFeeding.load(); }
+
+bool scrollFor(const ImRect& region, ImVec2& delta, ImVec2& start) {
+    start = sMouseStart;
+    if (!region.Contains(sMouseStart)) return false;
+    if (sMouseScrolling) {
+        delta = sScrollAccum;
+        sScrollAccum = ImVec2(0, 0);
+        return delta.x != 0.0f || delta.y != 0.0f;
+    }
+    if (!sFling) return false;
+    // Glide after a flick: the finger's speed, slowing down exponentially (about like iOS lists).
+    const float dt = std::min(ImGui::GetIO().DeltaTime, 0.05f);
+    delta = ImVec2(sScrollVel.x * dt, sScrollVel.y * dt);
+    const float decay = std::exp(-dt * 4.2f);
+    sScrollVel = ImVec2(sScrollVel.x * decay, sScrollVel.y * decay);
+    if (std::hypot(sScrollVel.x, sScrollVel.y) < 25.0f) {
+        sFling = false;
+        sScrollVel = ImVec2(0, 0);
+    }
+    return true;
+}
 const char* physicalController() { return sPadConnected ? sPadName.c_str() : nullptr; }
 
 void releaseAll() {

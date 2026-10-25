@@ -18,6 +18,7 @@
 // the final pass only (2-4 bilinear taps per channel plus the mask math).
 #include "recomp/crt.h"
 
+#include "mobile/mobile.h"
 #include "recomp/gx_bridge.h"
 #include "recomp/menu.h"
 
@@ -826,7 +827,7 @@ bool sliderF(const char* label, float& v, float lo, float hi, const char* fmt = 
 template <typename E>
 bool comboE(const char* label, E& value, const char* const* names, int count) {
     int i = int(value);
-    const bool changed = ImGui::Combo(label, &i, names, count);
+    const bool changed = recomp::menu::Combo(label, &i, names, count);
     if (changed) value = E(i);
     return changed;
 }
@@ -987,7 +988,10 @@ void update() {
     const float here = float(dc.vfilter[2] + dc.vfilter[3] + dc.vfilter[4]) / 64.0f;
     const float below = float(dc.vfilter[5] + dc.vfilter[6]) / 64.0f;
     const float gamma = dc.gamma == 1 ? 1.7f : dc.gamma == 2 ? 2.2f : 1.0f;
-    const bool filter = port::settings().rendering.displayCopyFilter &&
+    // Phone with MetalFX upscaling on (src/mobile): no display copy filter pass. Aurora upscales
+    // with MetalFX only when no post-process chain runs, and this pass alone kept the chain on, so
+    // MetalFX never ran (the Upscaling row changed nothing). MetalFX resolves the picture itself.
+    const bool filter = port::settings().rendering.displayCopyFilter && !mobile::upscalingOn() &&
                         (above != 0.0f || below != 0.0f || here != 1.0f || gamma != 1.0f);
     const float dcopy[4] = {above, here, below, 0.0f};
     const float dcopy2[4] = {gamma, float(dc.efbHeight), 0.0f, 0.0f};
@@ -1023,8 +1027,9 @@ bool drawMenu() {
     using namespace port;
     auto& s = settings().crt;
     bool changed = recomp::menu::Checkbox("CRT filter", &s.enabled);
-    ImGui::SetItemTooltip("Makes the picture look like a CRT television: scanlines, a phosphor mask, glow and\n"
-                          "screen curvature. One post-processing pass chain on the finished image.");
+    recomp::menu::ItemTooltip("Makes the picture look like a CRT television: scanlines, a phosphor mask, glow and\n"
+                          "screen curvature. One post-processing pass chain on the finished image.%s",
+                          mobile::enabled() ? " MetalFX upscaling (Phone tab) pauses while it is on." : "");
     if (s.enabled && !aurora_postfx_active()) {
         ImGui::SameLine();
         ImGui::TextDisabled("(shader failed to compile, see log)");
@@ -1034,24 +1039,24 @@ bool drawMenu() {
     static const char* kPresets[] = {"Aperture grille (Royale-like)", "Slot mask", "Shadow mask", "Consumer TV",
                                      "Custom"};
     int preset = int(s.preset);
-    if (ImGui::Combo("CRT preset", &preset, kPresets, 5)) {
+    if (recomp::menu::Combo("CRT preset", &preset, kPresets, 5)) {
         if (CrtPreset(preset) != CrtPreset::Custom) applyPreset(s, CrtPreset(preset));
         s.preset = CrtPreset(preset);
         changed = true;
     }
-    ImGui::SetItemTooltip("Kind of tube: aperture grille (sharp vertical stripes, like a Trinitron), slot mask,\n"
+    recomp::menu::ItemTooltip("Kind of tube: aperture grille (sharp vertical stripes, like a Trinitron), slot mask,\n"
                           "shadow mask, or a soft consumer TV. Custom keeps the advanced values.");
     static const char* kLines[] = {"480 lines (progressive)", "240 lines (double strike)", "480i (interlaced fields)"};
     changed |= comboE("Scanlines", s.scanlines, kLines, 3);
-    ImGui::SetItemTooltip("480 lines: the game's progressive output. 240 lines: thick visible scanlines like a\n"
+    recomp::menu::ItemTooltip("480 lines: the game's progressive output. 240 lines: thick visible scanlines like a\n"
                           "240p signal. 480i: alternating interlaced fields, as a TV shows the 480i signal.");
     static const char* kSignals[] = {"RGB (clean)", "S-Video", "Composite", "RF (antenna / coax)"};
     int signal = int(s.signal);
-    if (ImGui::Combo("Signal", &signal, kSignals, 4)) {
+    if (recomp::menu::Combo("Signal", &signal, kSignals, 4)) {
         applySignal(s, CrtSignal(signal));
         changed = true;
     }
-    ImGui::SetItemTooltip("The cable between the console and the TV, modelled on the game's NTSC signal:\n"
+    recomp::menu::ItemTooltip("The cable between the console and the TV, modelled on the game's NTSC signal:\n"
                           "RGB: the clean picture.\n"
                           "S-Video: luma and chroma on separate wires; slightly soft luma, softer colour edges,\n"
                           "no dot crawl.\n"
@@ -1067,108 +1072,108 @@ bool drawMenu() {
     if (s.signal != CrtSignal::Rgb && ImGui::TreeNode("Signal advanced")) {
         const bool composite = s.signal == CrtSignal::Composite || s.signal == CrtSignal::Rf;
         changed |= sliderF("Luma bandwidth", s.lumaBandwidth, 1.5f, 6.0f, "%.1f MHz");
-        ImGui::SetItemTooltip("Sharpness: bandwidth of the TV's brightness channel. NTSC broadcast is 4.2 MHz;\n"
+        recomp::menu::ItemTooltip("Sharpness: bandwidth of the TV's brightness channel. NTSC broadcast is 4.2 MHz;\n"
                               "lower is softer (an old set on RF ~3 MHz), higher keeps more of the game's detail.");
         changed |= sliderF("Chroma bandwidth", s.chromaBandwidth, 0.3f, 2.0f, "%.2f MHz");
-        ImGui::SetItemTooltip("Bandwidth of the colour signal: lower smears colour edges more (to the right,\n"
+        recomp::menu::ItemTooltip("Bandwidth of the colour signal: lower smears colour edges more (to the right,\n"
                               "as the TV's analog colour filter does). 1.3 MHz is the NTSC I channel.");
         changed |= sliderF("Sharpening", s.sharpening, 0.0f, 1.0f);
-        ImGui::SetItemTooltip("The TV's sharpness control (peaking): boosts edges, with a slight halo");
+        recomp::menu::ItemTooltip("The TV's sharpness control (peaking): boosts edges, with a slight halo");
         changed |= sliderF("Color", s.saturation, 0.0f, 1.5f);
-        ImGui::SetItemTooltip("The TV's colour (saturation) control. Composite and RF sets lose a little colour.");
+        recomp::menu::ItemTooltip("The TV's colour (saturation) control. Composite and RF sets lose a little colour.");
         if (composite) {
             static const char* kSep[] = {"Notch filter (cheap TV)", "2-line comb filter", "3-line comb filter"};
             changed |= comboE("Y/C separation", s.separation, kSep, 3);
-            ImGui::SetItemTooltip("How the TV splits the composite signal into brightness and colour.\n"
+            recomp::menu::ItemTooltip("How the TV splits the composite signal into brightness and colour.\n"
                                   "Notch: removes everything near the subcarrier from luma (softer), strong dot\n"
                                   "crawl along vertical colour edges and rainbows on fine detail.\n"
                                   "Comb: subtracts lines of the same field (their colour is in opposite phase):\n"
                                   "sharper, clean flat colour; dots 'hang' on horizontal colour edges instead.");
             changed |= sliderF("Artifact strength", s.artifacts, 0.0f, 1.0f);
-            ImGui::SetItemTooltip("How much luma/chroma crosstalk gets through: the dot crawl (colour left in the\n"
+            recomp::menu::ItemTooltip("How much luma/chroma crosstalk gets through: the dot crawl (colour left in the\n"
                                   "brightness) and the rainbows (fine detail decoded as colour). 1 = as the signal\n"
                                   "model gives it; 0 keeps the bandwidth limits only.");
         }
         if (s.signal == CrtSignal::Rf) {
             changed |= sliderF("Noise", s.noise, 0.0f, 1.0f);
-            ImGui::SetItemTooltip("Snow from a weak signal (new grain every field)");
+            recomp::menu::ItemTooltip("Snow from a weak signal (new grain every field)");
             changed |= sliderF("Ghost", s.ghost, 0.0f, 0.5f);
-            ImGui::SetItemTooltip("Strength of a reflected copy of the signal (multipath echo), seen to the right");
+            recomp::menu::ItemTooltip("Strength of a reflected copy of the signal (multipath echo), seen to the right");
             changed |= sliderF("Ghost delay", s.ghostDelay, 0.2f, 4.0f, "%.2f us");
-            ImGui::SetItemTooltip("How much later the echo arrives (1 us is about 13 game pixels to the right)");
+            recomp::menu::ItemTooltip("How much later the echo arrives (1 us is about 13 game pixels to the right)");
             changed |= sliderF("Jitter", s.jitter, 0.0f, 2.0f, "%.2f px");
-            ImGui::SetItemTooltip("Horizontal instability: every line locks a little off (game pixels)");
+            recomp::menu::ItemTooltip("Horizontal instability: every line locks a little off (game pixels)");
             changed |= sliderF("Hum bar", s.hum, 0.0f, 1.0f);
-            ImGui::SetItemTooltip("Mains hum: a soft dark band that rolls slowly up the picture (60 Hz against\n"
+            recomp::menu::ItemTooltip("Mains hum: a soft dark band that rolls slowly up the picture (60 Hz against\n"
                                   "the 59.94 Hz fields: one turn every 17 seconds)");
             changed |= sliderF("Interference", s.interference, 0.0f, 1.0f);
-            ImGui::SetItemTooltip("Beat with another carrier: fine moving diagonal bars");
+            recomp::menu::ItemTooltip("Beat with another carrier: fine moving diagonal bars");
         }
         if (recomp::menu::Button("Reset signal")) {
             applySignal(s, s.signal);
             changed = true;
         }
-        ImGui::SetItemTooltip("Puts the signal values back to the defaults of the chosen signal");
+        recomp::menu::ItemTooltip("Puts the signal values back to the defaults of the chosen signal");
         ImGui::TreePop();
     }
     if (ImGui::TreeNode("CRT advanced")) {
-        ImGui::SeparatorText("Beam");
+        recomp::menu::SeparatorText("Beam");
         custom |= sliderF("Min beam width", s.beamMinSigma, 0.05f, 0.6f);
-        ImGui::SetItemTooltip("Scanline beam sigma for dark colors, as a fraction of the line spacing");
+        recomp::menu::ItemTooltip("Scanline beam sigma for dark colors, as a fraction of the line spacing");
         custom |= sliderF("Max beam width", s.beamMaxSigma, 0.05f, 0.8f);
-        ImGui::SetItemTooltip("Beam sigma for full brightness: bright lines bloom wider");
+        recomp::menu::ItemTooltip("Beam sigma for full brightness: bright lines bloom wider");
         custom |= sliderF("Beam width response", s.beamSpotPower, 0.1f, 4.0f);
-        ImGui::SetItemTooltip("How quickly the beam widens with brightness (power curve)");
+        recomp::menu::ItemTooltip("How quickly the beam widens with brightness (power curve)");
         custom |= sliderF("Min beam shape", s.beamMinShape, 2.0f, 8.0f);
-        ImGui::SetItemTooltip("Beam profile exponent for dark colors: 2 = gaussian, higher = flatter top, sharper edge");
+        recomp::menu::ItemTooltip("Beam profile exponent for dark colors: 2 = gaussian, higher = flatter top, sharper edge");
         custom |= sliderF("Max beam shape", s.beamMaxShape, 2.0f, 8.0f);
-        ImGui::SetItemTooltip("Beam profile exponent for full brightness");
+        recomp::menu::ItemTooltip("Beam profile exponent for full brightness");
         custom |= sliderF("Beam shape response", s.beamShapePower, 0.1f, 4.0f);
-        ImGui::SetItemTooltip("How quickly the beam profile changes with brightness (power curve)");
+        recomp::menu::ItemTooltip("How quickly the beam profile changes with brightness (power curve)");
         custom |= sliderF("Horizontal softness", s.horizontalSoftness, 0.0f, 2.0f, "%.2f px");
-        ImGui::SetItemTooltip("Horizontal spot size (gaussian sigma) in game pixels");
+        recomp::menu::ItemTooltip("Horizontal spot size (gaussian sigma) in game pixels");
 
-        ImGui::SeparatorText("Phosphor mask");
+        recomp::menu::SeparatorText("Phosphor mask");
         static const char* kMasks[] = {"Aperture grille", "Slot mask", "Shadow mask", "None"};
         custom |= comboE("Mask type", s.mask, kMasks, 4);
-        ImGui::SetItemTooltip("Pattern of the red, green and blue phosphors");
+        recomp::menu::ItemTooltip("Pattern of the red, green and blue phosphors");
         custom |= sliderF("Mask size", s.maskSize, 1.0f, 12.0f, "%.1f px");
-        ImGui::SetItemTooltip("Width of one RGB triad in output pixels (3 = one pixel per phosphor)");
+        recomp::menu::ItemTooltip("Width of one RGB triad in output pixels (3 = one pixel per phosphor)");
         custom |= sliderF("Mask strength", s.maskStrength, 0.0f, 1.0f);
-        ImGui::SetItemTooltip("How visible the phosphor pattern is (0 = none)");
+        recomp::menu::ItemTooltip("How visible the phosphor pattern is (0 = none)");
 
-        ImGui::SeparatorText("Glow");
+        recomp::menu::SeparatorText("Glow");
         custom |= sliderF("Halation", s.halation, 0.0f, 0.5f, "%.3f");
-        ImGui::SetItemTooltip("Light scattered inside the tube glass (local glow, before the mask)");
+        recomp::menu::ItemTooltip("Light scattered inside the tube glass (local glow, before the mask)");
         custom |= sliderF("Diffusion", s.diffusion, 0.0f, 0.5f, "%.3f");
-        ImGui::SetItemTooltip("Wide haze from light diffused across the faceplate");
+        recomp::menu::ItemTooltip("Wide haze from light diffused across the faceplate");
         custom |= sliderF("Bloom", s.bloom, 0.0f, 1.0f);
-        ImGui::SetItemTooltip("Glow around bright parts of the picture");
+        recomp::menu::ItemTooltip("Glow around bright parts of the picture");
         custom |= sliderF("Brightness boost", s.brightness, 0.5f, 3.0f, "%.2fx");
-        ImGui::SetItemTooltip("Makes up for the light the scanlines and mask take away");
+        recomp::menu::ItemTooltip("Makes up for the light the scanlines and mask take away");
 
-        ImGui::SeparatorText("Convergence (game pixels)");
+        recomp::menu::SeparatorText("Convergence (game pixels)");
         custom |= ImGui::SliderFloat2("Red offset", &s.convergence[0], -2.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-        ImGui::SetItemTooltip("Horizontal and vertical shift of the red beam (misconverged tubes)");
+        recomp::menu::ItemTooltip("Horizontal and vertical shift of the red beam (misconverged tubes)");
         custom |= ImGui::SliderFloat2("Green offset", &s.convergence[2], -2.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-        ImGui::SetItemTooltip("Horizontal and vertical shift of the green beam");
+        recomp::menu::ItemTooltip("Horizontal and vertical shift of the green beam");
         custom |= ImGui::SliderFloat2("Blue offset", &s.convergence[4], -2.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-        ImGui::SetItemTooltip("Horizontal and vertical shift of the blue beam");
+        recomp::menu::ItemTooltip("Horizontal and vertical shift of the blue beam");
 
-        ImGui::SeparatorText("Gamma and geometry");
+        recomp::menu::SeparatorText("Gamma and geometry");
         custom |= sliderF("CRT gamma", s.gammaIn, 1.8f, 3.0f);
-        ImGui::SetItemTooltip("Gamma of the emulated tube (decodes the game image to linear light)");
+        recomp::menu::ItemTooltip("Gamma of the emulated tube (decodes the game image to linear light)");
         custom |= sliderF("Display gamma", s.gammaOut, 1.8f, 3.0f);
-        ImGui::SetItemTooltip("Gamma of your monitor (encodes the result for it)");
+        recomp::menu::ItemTooltip("Gamma of your monitor (encodes the result for it)");
         custom |= sliderF("Curvature", s.curvature, 0.0f, 0.3f, "%.3f");
-        ImGui::SetItemTooltip("Bulge of the screen glass (0 = flat)");
+        recomp::menu::ItemTooltip("Bulge of the screen glass (0 = flat)");
         custom |= sliderF("Corner radius", s.cornerRadius, 0.0f, 0.2f, "%.3f");
-        ImGui::SetItemTooltip("Rounding of the picture's corners (0 = square)");
+        recomp::menu::ItemTooltip("Rounding of the picture's corners (0 = square)");
         if (recomp::menu::Button("Reset to preset")) {
             applyPreset(s, s.preset == CrtPreset::Custom ? CrtPreset::ApertureGrille : s.preset);
             changed = true;
         }
-        ImGui::SetItemTooltip("Puts the advanced values back to the chosen preset (Aperture grille if Custom)");
+        recomp::menu::ItemTooltip("Puts the advanced values back to the chosen preset (Aperture grille if Custom)");
         ImGui::TreePop();
     }
     ImGui::Unindent();

@@ -228,8 +228,12 @@ int main(int argc, char* argv[]) {
 #endif
     // Updates (docs/SETUP.md "Updates"): remove what a finished update left, then look for a newer
     // release in the background (never blocks; the F1 menu shows the result).
-    port::update::cleanupAfterUpdate();
-    port::update::startupCheck();
+    // Not on a phone: the releases there are PC packages (an iPhone build is replaced by installing
+    // a new IPA).
+    if (!mobile::enabled()) {
+        port::update::cleanupAfterUpdate();
+        port::update::startupCheck();
+    }
     // A data folder too deep for the files Aurora writes with plain paths (docs/SETUP.md "Long paths").
     if (const std::string p = port::dataPathProblem(); !p.empty()) {
         std::fprintf(stderr, "%s\n", p.c_str());

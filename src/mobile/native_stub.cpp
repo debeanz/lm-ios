@@ -12,7 +12,12 @@ namespace mobile::native {
 bool isIOS() { return false; }
 void haptic(int) {}
 void rumble(bool) {}
-int setDisplayRate(int) { return 0; }
+int startRefreshSignal(int, void (*)()) { return 0; }
+const std::vector<unsigned char>& systemFont(std::string& name) {
+    static const std::vector<unsigned char> sNone;
+    name = "no system font on this platform (ImGui's default font)";
+    return sNone;
+}
 int thermalState() { return -1; }
 long long footprintMB() { return -1; }
 long long availableMemoryMB() { return -1; }

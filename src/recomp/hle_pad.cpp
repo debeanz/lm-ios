@@ -179,7 +179,7 @@ HLE(PADRead) {
     controls::afterRead(st);  // dead zones, sensitivity; input test values
     mobile::applyPad(st);     // phone: the on-screen GameCube controller on port 1 (src/mobile)
     logPad(st);
-    if (menu::isOpen()) {  // the overlay menu owns input while open
+    if (menu::isOpen() || menu::swallowPadAfterClose(st[0].button)) {  // the overlay menu owns input while open
         for (auto& s : st) {
             const s8 err = s.err;
             s = PADStatus{};

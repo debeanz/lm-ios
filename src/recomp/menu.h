@@ -8,6 +8,9 @@ void handleEvent(const SDL_Event& ev);    // host event loop
 void draw();                              // host thread, inside an Aurora frame
 bool isOpen();                            // game input is suppressed while open
 void toggle(const char* tab = nullptr);   // open (on that tab) or close, as F1 does (touch menu button)
+// PADRead (guest thread): true while the buttons that closed the menu (e.g. B) are still held, so
+// that press does not reach the game; false again once every button is released.
+bool swallowPadAfterClose(unsigned short buttons);
 bool quitRequested();                     // "Quit game" chosen in the menu
 void shutdown();                          // saves changes not yet written (window closed with the menu open)
 // LM_MENU_ID_CHECK sweep: tree nodes and collapsible sections in the menu call this right
@@ -20,6 +23,16 @@ void openTreesForCheck();
 bool Checkbox(const char* label, bool* v);
 bool Button(const char* label);
 bool SmallButton(const char* label);
+// ImGui::Combo / SeparatorText / SetItemTooltip for the menu's options: the same on a PC; on a phone
+// the menu's own look (menu_phone.h: value rows, section headings, tooltips in the description strip).
+bool Combo(const char* label, int* current, const char* const items[], int count, int popupMaxHeight = -1);
+bool Combo(const char* label, int* current, const char* zeroSeparatedItems, int popupMaxHeight = -1);
+void SeparatorText(const char* label);
+void ItemTooltip(const char* fmt, ...)
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((format(printf, 1, 2)))
+#endif
+    ;
 
 // ImGui::SliderFloat / SliderInt with "-" and "+" buttons in front: one click steps the value by
 // one unit of its last shown digit (1 for ints and "%.0f", 0.1 for "%.1f", 0.01 for "%.2f", ...),

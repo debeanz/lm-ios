@@ -2171,7 +2171,7 @@ void animationChoiceUi() {
         for (size_t j = 0; j < sChoice.j3d.size(); j++) {
             bool on = sChoice.j3dOn[j] != 0;
             const std::string& p = sMembers[sChoice.j3d[j]].path;
-            if (ImGui::Checkbox(baseName(p).c_str(), &on)) {
+            if (recomp::menu::Checkbox(baseName(p).c_str(), &on)) {
                 sChoice.j3dOn[j] = on;
                 if (on && endsWith(p, ".bck"))  // one joint animation at a time
                     for (size_t k = 0; k < sChoice.j3d.size(); k++)
@@ -2480,9 +2480,9 @@ void window() {
                 }
             }
             ImGui::EndChild();
-            ImGui::Checkbox("Furniture", &sFurniture);
+            recomp::menu::Checkbox("Furniture", &sFurniture);
             ImGui::SameLine();
-            ImGui::Checkbox("Furniture animations", &sFurnitureAnims);
+            recomp::menu::Checkbox("Furniture animations", &sFurnitureAnims);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Play every piece of furniture's action animation (anm/<name>_1.anm:\n"
                                   "drawers, doors, swinging lamps...) in a loop. Applies on Load.");
@@ -2498,17 +2498,17 @@ void window() {
     if (!sStatus.empty()) ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "%s", sStatus.c_str());
     if (!sLoadedInfo.empty()) ImGui::Text("%s", sLoadedInfo.c_str());
 
-    ImGui::SeparatorText("Display");
-    ImGui::Checkbox("Textures", &sTextures);
+    recomp::menu::SeparatorText("Display");
+    recomp::menu::Checkbox("Textures", &sTextures);
     ImGui::SameLine();
-    ImGui::Checkbox("Back faces", &sTwoSided);
+    recomp::menu::Checkbox("Back faces", &sTwoSided);
     ImGui::SameLine();
     ImGui::ColorEdit3("Backdrop", sBackdrop, ImGuiColorEditFlags_NoInputs);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Draw both sides of every triangle (no back-face culling),\ne.g. to see sky domes and rooms from outside.");
     if (sIsGhost) {
         ImGui::SameLine();
-        ImGui::Checkbox("Ghost effects", &sGhostFx);
+        recomp::menu::Checkbox("Ghost effects", &sGhostFx);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Draw the ghost through the game's ghost layer: ghost lighting, then added\n"
                               "back at half resolution weighted by its alpha (soft, glowing, see-through).\n"
@@ -2522,14 +2522,14 @@ void window() {
     }
     int wire = int(sWire);
     ImGui::SetNextItemWidth(160 * recomp::ui::scale());
-    ImGui::Combo("Wireframe", &wire, "Off\0Over model\0Only\0");
+    recomp::menu::Combo("Wireframe", &wire, "Off\0Over model\0Only\0");
     sWire = Wire(wire);
     if (sWire != Wire::Off) {
         ImGui::SameLine();
         ImGui::ColorEdit4("##wirecol", sWireColor, ImGuiColorEditFlags_NoInputs);
     }
 
-    ImGui::SeparatorText("Camera");
+    recomp::menu::SeparatorText("Camera");
     int mode = sCam.fly ? 1 : 0;
     bool modeChanged = ImGui::RadioButton("Orbit", &mode, 0);
     ImGui::SameLine();
@@ -2545,10 +2545,10 @@ void window() {
                           "in the folder screenshots of the data folder (F1 > Game > Data folder).");
     if (!sShotStatus.empty()) ImGui::TextDisabled("%s", sShotStatus.c_str());
     if (!sCam.fly) {
-        ImGui::Checkbox("Spin", &sCam.spin);
+        recomp::menu::Checkbox("Spin", &sCam.spin);
         if (sDraw.size() == 1 && sDraw[0].kind == Kind::Mdl && !sDraw[0].bindPose) {
             ImGui::SameLine();
-            ImGui::Checkbox("Follow", &sFollow);
+            recomp::menu::Checkbox("Follow", &sFollow);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Keep the orbit centre on the model while its animation moves it\n"
                                   "(on by default for cutscene models that travel through the scene).");
@@ -2563,7 +2563,7 @@ void window() {
         ImGui::TextDisabled("Drag to look, WASD/QE to move, Shift faster,\nwheel changes speed.");
     }
     if (sNumFrames > 1) {
-        ImGui::SeparatorText("Animation");
+        recomp::menu::SeparatorText("Animation");
         if (ImGui::Button(sAnim.play ? "Pause" : "Play")) {
             if (!sAnim.play && !sAnim.loop && sFrame >= float(sNumFrames - 1)) sFrame = 0.0f;
             sAnim.play = !sAnim.play;
@@ -2579,7 +2579,7 @@ void window() {
             sFrame = std::min(float(sNumFrames - 1), std::floor(sFrame) + 1.0f);
         }
         ImGui::SameLine();
-        ImGui::Checkbox("Loop", &sAnim.loop);
+        recomp::menu::Checkbox("Loop", &sAnim.loop);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(110 * recomp::ui::scale());
         recomp::menu::SliderFloat("Speed##anim", &sAnim.speed, 0.1f, 3.0f, "%.2fx");

@@ -437,7 +437,7 @@ bool sTextOpen = false;
 
 void textArchiveButton() {
     if (recomp::menu::Button(sTextOpen ? "Close text archive###textarchive" : "Text archive (unused lines)###textarchive")) sTextOpen = !sTextOpen;
-    ImGui::SetItemTooltip("Opens a window with the game's text, unused lines included, drawn in the game font.");
+    recomp::menu::ItemTooltip("Opens a window with the game's text, unused lines included, drawn in the game font.");
 }
 
 void textArchiveWindow() {
@@ -489,7 +489,7 @@ void textArchiveWindow() {
                     if (i < std::size(kEvent26English) && kEvent26English[i]) ImGui::TextWrapped("%s", kEvent26English[i]);
                     ImGui::Separator();
                 }
-                ImGui::SeparatorText("Developer notes in the script");
+                recomp::menu::SeparatorText("Developer notes in the script");
                 for (const std::string& n : e.comments) {
                     showGameText(n, sScale * 0.8f);
                     if (const char* en = translateNote(n)) {
@@ -507,7 +507,7 @@ void textArchiveWindow() {
             ImGui::BeginChild("notes");
             for (const EventFile& e : sEvents) {
                 if (e.comments.empty()) continue;
-                ImGui::SeparatorText(("event" + std::string(e.no < 10 ? "0" : "") + std::to_string(e.no)).c_str());
+                recomp::menu::SeparatorText(("event" + std::string(e.no < 10 ? "0" : "") + std::to_string(e.no)).c_str());
                 for (const std::string& n : e.comments) showGameText(n, sScale * 0.8f);
             }
             ImGui::EndChild();

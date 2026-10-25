@@ -30,6 +30,9 @@ void afterReplay();  // after the game frame / interpolated replay was issued (L
 // animated sky with a still camera). LM_PRESENT_HOLD=0: off (test aid).
 void beforeEnd();
 void afterFrame();   // after aurora_end_frame: frame cost bookkeeping
+// Any thread: the display just refreshed (iOS display link, src/mobile): the vblank signal of the
+// fixed-refresh schedule where the platform has no vblank monitor of its own.
+void displayRefreshed();
 // The time the frame being built is shown for (its scheduled start; the constant display latency
 // is absorbed by the interpolation delay). Clock::now() when not pacing.
 Clock::time_point frameTime();

@@ -200,7 +200,8 @@ void setCurrent(Role role) {
     const int err = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
     static std::atomic<unsigned> sLogged{0};
     if (!(sLogged.fetch_or(1u << unsigned(role)) & (1u << unsigned(role))))
-        log("[cpu] %s thread: QoS user-interactive%s", kRoleName[int(role)], err ? " (failed)" : "");
+        log("[cpu] %s thread: QoS user-interactive%s", kRoleName[int(role)],
+            err ? " not applied (the thread already has a fixed priority of its own, e.g. SDL's high priority)" : "");
 #endif
 }
 

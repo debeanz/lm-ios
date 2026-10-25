@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace mobile::native {
 
@@ -14,11 +15,16 @@ bool isIOS();
 void haptic(int style);
 void rumble(bool on);
 
-// ProMotion panels pick their refresh rate from what the app asks for: a display link requesting
-// exactly `hz` (60 or 120) runs the panel at that rate, so every presented frame lands on a refresh
-// (presents on a timer at 60 while the panel ran at 120 were shown for 1 or 3 refreshes: judder).
-// 0 = no request (the system decides). Returns the rate in effect (0 if unknown).
-int setDisplayRate(int hz);
+// The panel's refreshes as a signal for the frame pacer: a display link on its own thread (the main
+// thread runs the game loop, a link there would fire late) asks for `hz` (ProMotion panels then run
+// at that rate) and calls onRefresh at every refresh it sees. Calling again changes the rate.
+// Returns the rate asked for (at most the panel's maximum); 0 = no display link on this platform.
+int startRefreshSignal(int hz, void (*onRefresh)());
+
+// The system UI font's file (iOS: San Francisco, read from the device; nothing is bundled), for the
+// menu's font atlas. Empty when it cannot be read or is not a plain TrueType/OpenType file (a
+// collection needs a face index ImGui is not told); `name` says which font or why not.
+const std::vector<unsigned char>& systemFont(std::string& name);
 
 // Device facts for the log header and the [perf] lines; -1 / empty when unknown.
 int thermalState();              // 0 nominal, 1 fair, 2 serious, 3 critical
