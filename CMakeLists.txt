@@ -154,7 +154,7 @@ function(lm_runtime_target tgt)
     if (IOS)
         # Phone layer (src/mobile/native_ios.mm): haptics, Files picker, memory/thermal readings.
         target_link_libraries(${tgt} PRIVATE "-framework UIKit" "-framework Foundation" "-framework Metal"
-            "-framework QuartzCore" "-framework CoreHaptics" "-framework UniformTypeIdentifiers"
+            "-framework QuartzCore" "-framework CoreHaptics" "-framework CoreText" "-framework CoreGraphics" "-framework UniformTypeIdentifiers"
             "-framework GameController")
     elseif (WIN32)
         target_link_libraries(${tgt} PRIVATE dbghelp winhttp bcrypt)  # winhttp/bcrypt: updater
