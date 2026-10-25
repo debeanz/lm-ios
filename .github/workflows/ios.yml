@@ -84,8 +84,12 @@ jobs:
 
       - name: Host recompiler
         run: |
-          cmake -S tools/recomp/host -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Release
+          # A program for this Mac, not the phone: with the job's IPHONEOS_DEPLOYMENT_TARGET set,
+          # clang built it for iOS and macOS killed it at start (runs 8 and 9, "Killed: 9").
+          unset IPHONEOS_DEPLOYMENT_TARGET
+          cmake -S tools/recomp/host -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_SYSROOT=macosx
           cmake --build build/host
+          vtool -show-build build/host/lmrecompile | grep -i platform
 
       - name: Configure (iOS arm64)
         run: |
@@ -120,8 +124,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/out"
           log="$RUNNER_TEMP/out/build-${{ github.run_number }}.log"
           set +e
-          # The recompiler alone first: run next to the parallel compiles it needs a lot of memory
-          # and the runner killed it (run 8, exit 137).
+          # The recompiler alone first (its output is needed by everything after it).
           cmake --build build/ios --target recomp_gen/funcs.h > "$log" 2>&1 &&
             cmake --build build/ios --target LuigisMansioniOS -- -k 0 >> "$log" 2>&1
           status=$?
