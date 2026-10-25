@@ -33,6 +33,9 @@ jobs:
       DATA_REPO: ${{ vars.GAME_DATA_REPO }}
       GH_TOKEN: ${{ secrets.GAME_DATA_TOKEN }}
       TAG: ios-${{ github.run_number }}
+      # Rust's cc builds (nod's compression code) otherwise target the SDK's iOS version (26.x),
+      # not the app's minimum.
+      IPHONEOS_DEPLOYMENT_TARGET: "16.0"
     steps:
       - name: Check the data repository
         run: |
