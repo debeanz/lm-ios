@@ -630,7 +630,7 @@ bool begin(SDL_FingerID f, ImVec2 p) {
             for (size_t i = 0; i < sCtl.size(); i++) {
                 const Control& c = sCtl[i];
                 if (c.owned || (pass == 0) == (c.kind == Kind::Stick)) continue;
-                if (menuOpen && !c.menu) continue;  // with the menu open only its button shows
+                if (menuOpen) continue;  // the menu has its own "Back to game" button
                 if (hit(c, p, true)) {
                     found = int(i);
                     break;
@@ -1006,7 +1006,7 @@ bool handleEvent(const SDL_Event& ev) {
         if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN && ev.button.button == SDL_BUTTON_LEFT) {
             const ImVec2 p(ev.button.x, ev.button.y);
             for (size_t i = 0; i < sCtl.size() && sVisible; i++)
-                if (!sCtl[i].owned && hit(sCtl[i], p, true) && (!recomp::menu::isOpen() || sCtl[i].menu)) {
+                if (!sCtl[i].owned && hit(sCtl[i], p, true) && !recomp::menu::isOpen()) {
                     controlDown(int(i), kMouseFinger, p);
                     return true;
                 }
@@ -1039,9 +1039,9 @@ void draw() {
         if (c.kind == Kind::DPad) dpadRepeat(c);
         c.anim = c.pressed ? std::min(1.0f, c.anim + dt * 18.0f) : std::max(0.0f, c.anim - dt * 9.0f);
         if (c.ripple >= 0.0f) c.ripple = c.ripple + dt > kRippleSeconds ? -1.0f : c.ripple + dt;
-        if (menuOpen && !c.menu) continue;
+        if (menuOpen) continue;  // hidden under the menu (its "Back to game" button closes it)
         if (!sVisible && !c.menu) continue;
-        const float alpha = c.menu && (menuOpen || !sVisible) ? std::max(a, 0.85f) : a;
+        const float alpha = c.menu && !sVisible ? std::max(a, 0.85f) : a;
         switch (c.kind) {
         case Kind::Round: paintRound(dl, c, alpha); break;
         case Kind::Kidney: paintKidney(dl, c, alpha); break;

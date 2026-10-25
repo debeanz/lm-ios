@@ -68,6 +68,7 @@ bool sQuit = false;  // "Quit game" confirmed
 // The menu window. The ID after ### is the old title, so imgui.ini keeps the window's saved size
 // and place.
 constexpr const char* kMenuWindow = "Luigi's Mansion Recompiled  (F1)###Luigi's Mansion PC  (F1)";
+constexpr const char* kPhoneMenuWindow = "Settings###Luigi's Mansion PC  (F1)";  // same window, no F1 key on a phone
 std::string sOpenTab = sEnvTab ? "Enhancements" : "";  // tab to select once (LM_MENU / LM_MENU_TAB)
 
 // ---- Test aid LM_MENU_ID_CHECK=1: Dear ImGui ID-conflict sweep ----------------------------
@@ -2158,7 +2159,7 @@ void draw() {
     idcheck::beforeWindow();
     menuSizeTestMouse();
     bool open = true;
-    if (ImGui::Begin(kMenuWindow, &open, flags)) {
+    if (ImGui::Begin(phone ? kPhoneMenuWindow : kMenuWindow, &open, flags)) {
         ImGui::PushItemWidth(ImGui::GetWindowWidth() * 0.45f);
         if (ImGui::BeginTabBar("tabs", phone ? ImGuiTabBarFlags_FittingPolicyScroll : 0)) {
             if (phone && tab("iPhone")) {
@@ -2204,7 +2205,17 @@ void draw() {
         ImGui::PopItemWidth();
         // Quit (with confirmation): ends the host loop the same way closing the window does.
         ImGui::Separator();
-        if (recomp::menu::Button("Restore all defaults")) ImGui::OpenPopup("Restore defaults?");
+        if (phone) {
+            // Phone: the touch menu button hides while the menu is open; this is the way back.
+            const float h = ImGui::GetFrameHeight() * 1.4f;
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            if (ImGui::Button("Back to game", ImVec2(ImGui::GetContentRegionAvail().x * 0.6f, h))) open = false;
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+        }
+        if (phone ? ImGui::Button("Restore all defaults", ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight() * 1.4f))
+                  : recomp::menu::Button("Restore all defaults"))
+            ImGui::OpenPopup("Restore defaults?");
         ImGui::SetItemTooltip("Every setting in this menu (including controller bindings) goes back to its\n"
                               "first-install default. Save files are not touched.");
         if (ImGui::BeginPopupModal("Restore defaults?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
