@@ -60,6 +60,8 @@ jobs:
 
       - name: Tools (Xcode, Ninja, Rust for nod)
         run: |
+          # Newest Xcode on the image (C++20 threads in libc++; Xcode 16.4 needs -fexperimental-library).
+          sudo xcode-select -s /Applications/Xcode_26.3.app
           xcodebuild -version
           brew list ninja >/dev/null 2>&1 || brew install ninja
           rustup target add aarch64-apple-ios

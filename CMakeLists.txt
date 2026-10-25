@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.25)
 project(lmport LANGUAGES C CXX VERSION 1.1.4)
 if (APPLE)
     enable_language(OBJC OBJCXX)  # src/mobile/native_ios.mm (iOS phone layer)
+    # Aurora uses std::jthread / std::stop_token, which Apple's libc++ still keeps behind its
+    # experimental switch in older Xcode versions (harmless in newer ones).
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-fexperimental-library>)
+    add_link_options(-fexperimental-library)
 endif ()
 
 set(CMAKE_C_STANDARD 11)
