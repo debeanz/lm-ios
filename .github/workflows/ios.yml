@@ -120,7 +120,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/out"
           log="$RUNNER_TEMP/out/build-${{ github.run_number }}.log"
           set +e
-          cmake --build build/ios --target LuigisMansioniOS -- -k 0 > "$log" 2>&1
+          # The recompiler alone first: run next to the parallel compiles it needs a lot of memory
+          # and the runner killed it (run 8, exit 137).
+          cmake --build build/ios --target recomp_gen/funcs.h > "$log" 2>&1 &&
+            cmake --build build/ios --target LuigisMansioniOS -- -k 0 >> "$log" 2>&1
           status=$?
           set -e
           # Public log: errors and warnings from the port's own code and third-party code; messages
